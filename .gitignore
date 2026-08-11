@@ -22,3 +22,6 @@ Thumbs.db
 # VS Code
 .vscode/*
 !.vscode/extensions.json
+
+# Terraform 
+**/.terraform/ *.tfstate *.tfstate.backup *.tfstate.*.backup crash.log

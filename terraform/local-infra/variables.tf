@@ -3,3 +3,9 @@ variable "network_name" {
   type        = string
   default     = "cloudguardian-net"
 }
+
+variable "docker_host" {
+  description = "Docker daemon socket/pipe. Default matches Docker Desktop on Windows with the WSL2 backend (the common setup). On macOS/Linux, override with -var=\"docker_host=unix:///var/run/docker.sock\"."
+  type        = string
+  default     = "npipe:////./pipe/dockerDesktopLinuxEngine"
+}

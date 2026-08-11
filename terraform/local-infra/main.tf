@@ -22,7 +22,15 @@ terraform {
   }
 }
 
-provider "docker" {}
+provider "docker" {
+  # The kreuzwerker/docker provider doesn't always autodetect Docker
+  # Desktop's Windows named pipe correctly - on the common WSL2-backend
+  # setup, the actual pipe is "dockerDesktopLinuxEngine", not the
+  # provider's default "docker_engine". Without this, apply fails with
+  # a confusing "elevated privileges" / "system cannot find the file
+  # specified" error even though Docker Desktop is running fine.
+  host = var.docker_host
+}
 
 resource "docker_network" "cloudguardian" {
   name = var.network_name
