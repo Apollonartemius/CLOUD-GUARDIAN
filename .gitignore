@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Env / secrets
+.env
+.env.*
+
+# Docker
+*.log
+
+# Grafana / Prometheus local data (if run outside Docker volumes)
+grafana-data/
+prometheus-data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/*
+!.vscode/extensions.json

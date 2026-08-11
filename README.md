@@ -17,8 +17,9 @@
   explainability view, and a control panel for triggering demo failures.
 - **Phase 6:** the monitored microservices are now provisioned by
   **Terraform** instead of docker-compose (real infrastructure-as-code),
-  and a **LocalStack**-simulated AWS S3 bucket represents the
-  multi-cloud piece of the story.
+  a **LocalStack**-simulated AWS S3 bucket represents one cloud in the
+  multi-cloud story, and a real deployment on **Render** (free, no
+  credit card) represents a genuinely non-simulated second cloud.
 
 ---
 
@@ -37,6 +38,12 @@ how this tends to work in real organizations:
 They're connected by a shared Docker network that **Terraform creates**
 and docker-compose references as `external`. **This means Terraform
 has to run before docker-compose now** — see Part 3 below.
+
+A fourth piece, **`render.yaml`**, is separate from both — it deploys
+one more copy of the same monitored service to Render's real (free)
+cloud infrastructure, so your local Prometheus ends up watching
+services across genuinely different environments, not just simulated
+ones.
 
 **Important — about the decision-engine restarting containers:** it's
 given direct access to your Docker Engine (via a mounted
@@ -82,40 +89,17 @@ Install these extensions (`Ctrl+Shift+X`):
 4. Open a **new** terminal (PATH changes don't apply to already-open
    ones) and verify: `terraform -version`
 
-### 5. Google Cloud account + project (for the real infrastructure piece)
+### 5. GitHub account + Render account (for the real cloud piece)
 
-1. Go to https://console.cloud.google.com and sign in with a Google
-   account. You'll need to add a credit card for identity verification
-   — Google will **not** auto-charge it; the resources this project
-   uses fall under GCP's **Always Free** tier (one `e2-micro` VM,
-   permanently free, not the 90-day trial).
-2. Create a new project (top bar → project dropdown → "New Project").
-   Give it any name, note the **Project ID** shown underneath (not the
-   project *name* — the ID is the lowercase-with-hyphens one).
-3. Enable the Compute Engine API: search "Compute Engine API" in the
-   console search bar → click **Enable**. First-time enabling can take
-   a minute.
-4. Install the Google Cloud CLI:
-   https://cloud.google.com/sdk/docs/install → download the Windows
-   installer, run it, and let it launch `gcloud init` at the end.
-5. During `gcloud init`, log in with the same Google account and
-   select the project you just created.
-6. Set up Terraform's credentials (this is separate from the CLI login
-   above — Terraform needs its own "Application Default Credentials"):
-   ```powershell
-   gcloud auth application-default login
-   ```
-   This opens a browser window to authenticate. Once done, Terraform
-   will automatically use these credentials — no key files to manage
-   or accidentally commit to Git.
+No credit card needed for either.
 
-**Cost-safety checklist** before running `terraform apply` in
-`gcp-real/`: keep the region as `us-central1` (or `us-west1`/`us-east1`
-— the only Always-Free-eligible regions), don't change the machine
-type from `e2-micro`, and consider setting a budget alert in the GCP
-console (Billing → Budgets & alerts) for extra peace of mind — it'll
-email you if you ever approach any spend, even though this setup
-shouldn't generate any.
+1. If you don't already have one, create a free GitHub account at
+   https://github.com and a repo for this project (push it there —
+   Render deploys straight from a connected Git repo).
+2. Create a free Render account at https://render.com — sign up with
+   your GitHub account for the smoothest connection between the two.
+3. That's it for setup. Render reads `render.yaml` from your repo's
+   root automatically once you connect it (Part 11b below).
 
 ---
 
@@ -309,75 +293,84 @@ simulated, so no AWS account or cost involved.
 
 ---
 
-## Part 11b — Provision the real GCP VM (Phase 6)
+## Part 11b — Deploy the real service to Render (Phase 6)
 
-This is the genuinely real piece of your multi-cloud story — an actual
-`e2-micro` VM, on Google Cloud's Always Free tier, running the exact
-same `main.py` your local services run.
+This is the genuinely real piece of your multi-cloud story — the exact
+same `main.py` your local services run, deployed as a real, free web
+service on Render's infrastructure. No credit card required.
 
-```powershell
-cd terraform/gcp-real
-terraform init
-terraform apply -var="project_id=YOUR_PROJECT_ID"
+1. Push this project to a GitHub repo, if you haven't already:
+   ```powershell
+   git init
+   git add .
+   git commit -m "CloudGuardian AI"
+   git remote add origin https://github.com/<you>/cloudguardian-ai.git
+   git push -u origin main
+   ```
+2. In the Render dashboard: **New +** → **Blueprint** → connect the
+   repo you just pushed. Render finds `render.yaml` at the repo root
+   automatically and shows you the one service it defines
+   (`cloudguardian-cloud-service`) — click **Apply** to deploy it.
+3. First deploy takes a few minutes (Render builds the Docker image
+   from `services/simulated-service/Dockerfile`, same as your local
+   setup). Once it's live, Render shows you the public URL — something
+   like `https://cloudguardian-cloud-service.onrender.com`.
+
+Check it worked — open that URL in your browser:
 ```
-
-Replace `YOUR_PROJECT_ID` with the Project ID from GCP setup (Part 0).
-`terraform apply` will show a plan — type `yes` to confirm. This takes
-a couple of minutes: creating the VM, then the startup script installs
-Python and starts the service.
-
-Check it worked:
-```powershell
-terraform output
+https://cloudguardian-cloud-service.onrender.com/health
 ```
-Then open `http://<external_ip>:8000` (the IP from the output) in your
-browser — you should see the same `{"service": "cloud-service-gcp",
-"status": "running"}` response the local services give.
+You should see `{"status": "healthy", "service": "cloud-service-render"}`.
 
 **Wire it into Prometheus** so it shows up in Grafana and the anomaly
-detector alongside your local services:
+detector alongside your local services. Add this to
+`monitoring/prometheus/prometheus.yml` under `scrape_configs:`
+(replace the URL with your actual one from Render):
 
-```powershell
-terraform output prometheus_scrape_line
+```yaml
+  - job_name: "cloud-service-render"
+    scheme: https
+    static_configs:
+      - targets: ["cloudguardian-cloud-service.onrender.com"]
 ```
 
-Copy that output into `monitoring/prometheus/prometheus.yml` under
-`scrape_configs:` (same format as the existing `auth-service` entry),
-then restart Prometheus so it picks up the change:
+Then restart Prometheus:
 ```powershell
-cd ../..
 docker compose restart prometheus
 ```
 
 Check **http://localhost:9090** → **Status → Targets** — you should
-now see 4 targets total, one of them a real IP address instead of a
-container name. **This is your platform monitoring infrastructure
+now see 4 targets total, one of them a real internet hostname instead
+of a container name. **This is your platform monitoring infrastructure
 across two genuinely different environments** — your laptop and a real
-cloud VM — which is what makes the "multi-cloud" claim in the project
-title honest rather than just simulated.
+cloud service — which is what makes the "multi-cloud" claim in the
+project title honest rather than fully simulated.
 
 Since the anomaly-detector reads from the same Postgres history
 regardless of where a service physically runs, **detection** works
-identically on this VM too:
+identically on this deployment too:
 ```powershell
-curl.exe -X POST "http://<external_ip>:8000/chaos/cpu_spike?duration_seconds=90"
+curl.exe -X POST "https://cloudguardian-cloud-service.onrender.com/chaos/cpu_spike?duration_seconds=90"
 curl.exe "http://localhost:8020/anomalies/current?minutes=5"
 ```
 
-**One honest limitation worth knowing:** the decision-engine's
-remediation step won't actually work for this VM. It restarts services
-by calling the Docker Engine API for a container named after the
-service — but `cloud-service-gcp` isn't a Docker container on your
-machine, it's a real VM, so that call will fail (you'll see an
-incident logged with `outcome: "failed"`). This is a genuine
-architectural boundary, not a bug: fixing it properly would mean
-adding a second remediation executor (e.g. an SSH- or
-gcloud-API-based restart for VM targets) alongside the existing
-Docker-based one. If you want to extend the project further, this is
-a strong, well-scoped next feature to build and would be a good thing
-to mention in your report as a known limitation with a clear path
-forward — reviewers tend to respect an honest "here's what doesn't
-work yet and why" over a vague claim that everything is fully solved.
+**Two honest things worth knowing:**
+
+- **Remediation won't work for this service.** The decision-engine
+  restarts services by calling the Docker Engine API for a container
+  named after the service — but this service runs on Render's
+  infrastructure, not as a Docker container on your machine, so that
+  call will fail (you'll see an incident logged with `outcome:
+  "failed"`). This is a genuine architectural boundary, not a bug —
+  fixing it would mean adding a second remediation executor (e.g. via
+  Render's own API, which does support triggering a restart) alongside
+  the existing Docker-based one. Worth listing as a known limitation
+  with a clear next step in your report, rather than hiding it.
+- **Free services on Render sleep after 15 minutes of inactivity** and
+  take ~30-50s to wake on the next request. In practice, Prometheus
+  scraping it every 5 seconds should keep it continuously active during
+  a demo — but if you leave it untouched for a while, the first request
+  afterward will be slow. Worth remembering if you're demoing live.
 
 ---
 
@@ -389,11 +382,9 @@ Reverse order from startup:
 # 1. Stop the platform stack
 docker compose down          # add -v to also wipe Grafana/Postgres/LocalStack volumes
 
-# 2. Tear down the Terraform-managed infrastructure
+# 2. Tear down the local Terraform-managed infrastructure
 cd terraform/aws-simulated
 terraform destroy
-cd ../gcp-real
-terraform destroy -var="project_id=YOUR_PROJECT_ID"
 cd ../local-infra
 terraform destroy
 ```
@@ -402,12 +393,10 @@ terraform destroy
 step leaves the 3 local containers running even after
 `docker compose down`, since Terraform (not compose) owns them.
 
-**Don't skip destroying the GCP VM if you're stepping away for a while
-— even though it's free-tier eligible, it costs nothing only while it
-stays within Always Free limits.** If you're just pausing for the day
-and plan to keep working on it, leaving it running is fine (one
-`e2-micro` instance is free indefinitely). If you're done with this
-phase for a longer stretch, tearing it down is the safe default.
+**The Render deployment doesn't need manual teardown** — it's on
+Render's free tier, sleeps automatically after inactivity, and costs
+nothing either way. If you want to remove it entirely, delete the
+service from the Render dashboard.
 
 ---
 
@@ -416,20 +405,16 @@ phase for a longer stretch, tearing it down is the safe default.
 ```
 cloudguardian-ai/
 ├── docker-compose.yml              # platform stack (8 containers)
+├── render.yaml                     # Phase 6: Render Blueprint - real free cloud deployment
 ├── terraform/
 │   ├── local-infra/                # Phase 6: provisions the 3 monitored services
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   ├── aws-simulated/               # Phase 6: S3 bucket via LocalStack
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   └── gcp-real/                    # Phase 6: real e2-micro VM on GCP Always Free tier
+│   └── aws-simulated/               # Phase 6: S3 bucket via LocalStack
 │       ├── main.tf
 │       ├── variables.tf
-│       ├── outputs.tf
-│       └── startup-script.sh.tpl    # installs + runs the real main.py on the VM
+│       └── outputs.tf
 ├── scripts/
 │   └── evaluate_detector.py        # Phase 3: precision/recall evaluation harness
 ├── services/
@@ -490,10 +475,12 @@ cloudguardian-ai/
 The core platform is complete across all 6 phases: monitoring,
 anomaly detection with measured precision/recall, autonomous
 remediation with verification, a live explainability dashboard, and
-infrastructure-as-code with a genuine (if simulated) multi-cloud
-story. From here, natural next steps if you want to keep going:
-connecting one real free-tier cloud VM (GCP or Azure) instead of only
-simulated infrastructure, moving from Docker containers to a real
-Kubernetes cluster (k3s/minikube) for more realistic remediation
-playbooks like horizontal scaling, or polishing the demo flow and
-README for submission.
+infrastructure-as-code across three environments — local Docker,
+simulated AWS via LocalStack, and a genuinely real deployment on
+Render. From here, natural next steps if you want to keep going: a
+second remediation executor so the decision-engine can restart the
+Render service too (via Render's API) instead of only Docker
+containers, moving from Docker containers to a real Kubernetes cluster
+(k3s/minikube) for more realistic remediation playbooks like
+horizontal scaling, or polishing the demo flow and README for
+submission.

@@ -1,0 +1,35 @@
+# CloudGuardian AI - Real Cloud Deployment via Render (Phase 6)
+# ------------------------------------------------------------------
+# Render Blueprint: deploys the exact same simulated-service (the
+# real main.py + Dockerfile used locally, unmodified) as a genuinely
+# real, free web service on Render's infrastructure - no credit card
+# required, unlike the major hyperscalers.
+#
+# This is Render's own infrastructure-as-code format (a "Blueprint"),
+# which Render recommends over community/generic Terraform providers
+# for Render-only setups: https://render.com/docs/blueprint-spec
+#
+# How to use: push this repo to GitHub, then in the Render dashboard
+# choose "New +" -> "Blueprint" and point it at your repo. Render
+# reads this file automatically from the repo root. See the main
+# README for full step-by-step instructions.
+
+services:
+  - type: web
+    name: cloudguardian-cloud-service
+    runtime: docker
+    plan: free
+    dockerfilePath: ./services/simulated-service/Dockerfile
+    dockerContext: ./services/simulated-service
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: SERVICE_NAME
+        value: cloud-service-render
+      - key: BASE_CPU
+        value: "18"
+      - key: BASE_MEM
+        value: "280"
+      - key: BASE_LATENCY_MS
+        value: "55"
