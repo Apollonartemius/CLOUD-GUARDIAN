@@ -41,7 +41,13 @@ services:
     dockerContext: ./services/forecast-engine
     healthCheckPath: /health
     envVars:
+      - key: PORT
+        value: "8000"
       - key: DATABASE_URL
+        fromDatabase:
+          name: cloudguardian-db
+          property: connectionString
+      - key: JWT_SECRET
         sync: false
       - key: CPU_THRESHOLD_PERCENT
         value: "85"
@@ -59,9 +65,21 @@ services:
     dockerContext: ./services/ai-reasoning-agent
     healthCheckPath: /health
     envVars:
+      - key: PORT
+        value: "8000"
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: cloudguardian-db
+          property: connectionString
       - key: FORECAST_ENGINE_URL
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: JWT_SECRET
+        sync: false
+
+databases:
+  - name: cloudguardian-db
+    plan: free
+    databaseName: cloudguardian
+    user: cloudguardian
