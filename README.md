@@ -1,4 +1,4 @@
-# CloudGuardian AI — Phase 1 through Phase 6
+# CloudGuardian AI — Phase 1 through Phase 7
 
 **Autonomous Multi-Cloud Reliability Platform**
 
@@ -20,6 +20,13 @@
   a **LocalStack**-simulated AWS S3 bucket represents one cloud in the
   multi-cloud story, and a real deployment on **Render** (free, no
   credit card) represents a genuinely non-simulated second cloud.
+- **Phase 7:** predictive intelligence + production hardening — a
+  **forecast-engine** (Holt-Winters) that predicts SLO breaches before
+  they happen so the platform can act *proactively*, an **AI
+  reasoning agent** that writes post-incident RCA reports via Claude,
+  **JWT authentication** on every platform service, **CI (GitHub
+  Actions)**, **structured JSON logging with correlation IDs**, and
+  **webhook alerting** (Slack-compatible, SNS-ready).
 
 ---
 
@@ -32,8 +39,9 @@ how this tends to work in real organizations:
   microservices — the actual "fleet" being watched.
 - **docker-compose** (`docker-compose.yml`) owns the observability and
   self-healing *platform* around them: Prometheus, Grafana, Postgres,
-  metrics-collector, anomaly-detector, decision-engine, the dashboard,
-  and LocalStack.
+  metrics-collector, anomaly-detector, decision-engine, **forecast-engine
+  (Phase 7)**, **ai-reasoning-agent (Phase 7)**, the dashboard, and
+  LocalStack.
 
 They're connected by a shared Docker network that **Terraform creates**
 and docker-compose references as `external`. **This means Terraform
@@ -162,8 +170,9 @@ docker compose up --build
 
 Same command as before, but this now starts only the platform services
 (Prometheus, Postgres, metrics-collector, anomaly-detector,
-decision-engine, Grafana, dashboard, LocalStack) — the 3 monitored
-services are already running from Part 3.
+decision-engine, forecast-engine, ai-reasoning-agent, Grafana,
+dashboard, LocalStack) — the 3 monitored services are already running
+from Part 3.
 
 **Tip:** the Docker extension's sidebar in VS Code shows all running
 containers regardless of whether Terraform or docker-compose started
@@ -182,6 +191,8 @@ them — useful for checking status or viewing logs in one place.
 | Grafana | http://localhost:3000 (login: `admin` / `admin`) |
 | **Dashboard (Mission Control)** | **http://localhost:3001** |
 | LocalStack | http://localhost:4566 |
+| **Forecast engine (Phase 7)** | http://localhost:8040 |
+| **AI reasoning agent (Phase 7)** | http://localhost:8050 |
 
 In **Prometheus** (http://localhost:9090) → **Status → Targets** — all
 three services should show `UP`. This confirms Prometheus can reach the
@@ -265,12 +276,14 @@ curl.exe -X POST "http://localhost:8030/remediate/payment-service"
 
 ## Part 10 — Open the dashboard
 
-Open **http://localhost:3001**. This is the presentation layer for
-everything — vital signs per service (with a real heartbeat-style
-trace), the incident timeline with a detected → action → outcome
-breakdown, the raw anomaly feed, and a Failure Injection panel for
-one-click live demos. Polls every 5 seconds; give it a moment after
-opening.
+Open **http://localhost:3001** (log in with the admin credentials from
+Part 11c if prompted). This is the presentation layer for everything —
+vital signs per service (with a real heartbeat-style trace), the
+incident timeline with a detected → action → outcome breakdown with
+predictive/reactive badges, the raw anomaly feed, a Failure Injection
+panel for one-click live demos, plus the Phase 7 panels: forecasted
+metrics with breach-risk thresholds, a breach-risk list, and the **AI
+Copilot** chat. Polls every 5 seconds; give it a moment after opening.
 
 ---
 
@@ -374,6 +387,74 @@ curl.exe "http://localhost:8020/anomalies/current?minutes=5"
 
 ---
 
+## Part 11c — Phase 7: predictive intelligence + AI + auth
+
+Phase 7 makes the platform **proactive** and **production-hardened**.
+
+### 1. Log in (everything except the monitored fleet is now JWT-protected)
+
+The monitored services (8001-8003) stay open on purpose so you can
+inject chaos freely. Every platform service (8010-8050) requires a
+Bearer token; the dashboard handles login for you. To grab a token
+from the CLI:
+
+```powershell
+curl.exe -X POST http://localhost:8030/auth/login -H "Content-Type: application/json" `
+  -d '{"email":"admin@cloudguardian.ai","password":"admin123"}'
+```
+
+Default credentials are env-overridable with `ADMIN_EMAIL` /
+`ADMIN_PASSWORD`. Service-to-service calls use self-signed tokens from
+the shared `JWT_SECRET` (set it in your `.env` before a real
+deployment).
+
+### 2. Watch the forecast engine predict a breach (the "predictive" moment)
+
+```powershell
+curl.exe -X POST "http://localhost:8002/chaos/memory_leak?duration_seconds=300"
+curl.exe "http://localhost:8040/forecast/breach-risk"
+curl.exe "http://localhost:8030/incidents/current?minutes=5"
+```
+
+Within a retrain cycle (~90s) the forecast engine's Holt-Winters model
+should list `payment-service` with a rising `breach_risk`. When that
+risk crosses the confidence threshold (default 0.8), the
+decision-engine restarts the container **before** the SLO is actually
+breached and logs the incident with `"incident_type": "predictive"` —
+check it on the dashboard's Phase 7 panel.
+
+### 3. Get an AI root-cause report
+
+Every incident (reactive or predictive) is auto-sent to the AI
+reasoning agent, which builds an RCA report. Without an
+`ANTHROPIC_API_KEY` it runs a deterministic statistical fallback so
+the feature still works for the demo; with a key it uses Claude.
+
+```powershell
+# ask the copilot directly
+curl.exe -X POST http://localhost:8050/agent/ask -H "Content-Type: application/json" -H "Authorization: Bearer <token>" `
+  -d '{"question":"What is the current health of payment-service?"}'
+# fetch the stored report for an incident
+curl.exe "http://localhost:8050/agent/incidents/<incident_id>/report"
+```
+
+The dashboard's **AI Copilot** panel wraps all of this.
+
+### 4. CI + structured logs + alerts
+
+- **CI** (`.github/workflows/ci.yml`) runs `ruff`, `pytest`, the
+  dashboard build, and `terraform validate` on every push.
+- **Structured logging** — every service now emits one JSON object per
+  line (`ts`, `level`, `service`, `event`, plus fields), parseable by
+  Loki/CloudWatch/Stackdriver, with a `correlation_id` tracing each
+  incident across services.
+- **Alerting** — the decision-engine POSTs to a Slack-compatible
+  webhook when incidents trigger, escalate, or resolve. Point
+  `ALERT_WEBHOOK_URL` at a Slack incoming webhook to enable it; AWS SNS
+  can be swapped in behind the same `send_alert()` function.
+
+---
+
 ## Part 12 — Shutting down
 
 Reverse order from startup:
@@ -404,17 +485,22 @@ service from the Render dashboard.
 
 ```
 cloudguardian-ai/
-├── docker-compose.yml              # platform stack (8 containers)
+├── docker-compose.yml              # platform stack (10 containers)
 ├── render.yaml                     # Phase 6: Render Blueprint - real free cloud deployment
+├── .github/workflows/ci.yml        # Phase 7: ruff + pytest + dashboard build + terraform validate
+├── .ruff.toml                      # Phase 7: lint config
+├── conftest.py                     # Phase 7: shared pytest fixtures
+├── tests/                          # Phase 7: integration test (detect -> act -> verify)
 ├── terraform/
 │   ├── local-infra/                # Phase 6: provisions the 3 monitored services
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   └── aws-simulated/               # Phase 6: S3 bucket via LocalStack
-│       ├── main.tf
-│       ├── variables.tf
-│       └── outputs.tf
+│   ├── aws-simulated/               # Phase 6: S3 bucket via LocalStack
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   └── gcp-real/                   # Phase 6: real GCP deployment blueprint
 ├── scripts/
 │   └── evaluate_detector.py        # Phase 3: precision/recall evaluation harness
 ├── services/
@@ -430,18 +516,38 @@ cloudguardian-ai/
 │   │   ├── main.py
 │   │   ├── requirements.txt
 │   │   └── Dockerfile
-│   ├── decision-engine/            # Phase 4: trigger -> restart -> verify -> escalate
+│   ├── decision-engine/            # Phase 4+7: reactive + predictive remediation, auth, alerting
 │   │   ├── main.py
+│   │   ├── auth.py                 # Phase 7: shared JWT module
+│   │   ├── logutil.py              # Phase 7: shared JSON logging
+│   │   ├── tests/test_decision.py
 │   │   ├── requirements.txt
 │   │   └── Dockerfile
-│   └── dashboard/                  # Phase 5: React "Mission Control" UI
-│       ├── src/
-│       │   ├── App.jsx
-│       │   ├── api.js
-│       │   └── components/
-│       ├── package.json
-│       ├── Dockerfile
-│       └── nginx.conf
+│   ├── forecast-engine/            # Phase 7: Holt-Winters SLO breach forecasting (port 8040)
+│   │   ├── main.py
+│   │   ├── auth.py
+│   │   ├── logutil.py
+│   │   ├── tests/test_forecast.py
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   ├── ai-reasoning-agent/         # Phase 7: Claude RCA reports + copilot (port 8050)
+│   │   ├── main.py
+│   │   ├── auth.py
+│   │   ├── logutil.py
+│   │   ├── tests/test_agent.py
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   ├── dashboard/                  # Phase 5+7: React "Mission Control" UI with Phase 7 panels
+│   │   ├── src/
+│   │   │   ├── App.jsx
+│   │   │   ├── api.js
+│   │   │   └── components/
+│   │   ├── package.json
+│   │   ├── Dockerfile
+│   │   └── nginx.conf
+│   └── shared/
+│       ├── auth.py                 # Phase 7: source of truth for the JWT module
+│       └── logutil.py              # Phase 7: source of truth for the JSON logger
 └── monitoring/
     ├── prometheus/
     │   └── prometheus.yml
@@ -465,6 +571,11 @@ cloudguardian-ai/
   `network_name` variable (both default to `cloudguardian-net`).
 - **`docker compose up` fails saying the network doesn't exist** — you
   ran docker-compose before Terraform. Do Part 3 before Part 4.
+- **`401` / `403` on platform endpoints (8010-8050)** — Phase 7 added
+  JWT auth. The dashboard logs in for you; for curl add
+  `-H "Authorization: Bearer <token>"` (see Part 11c step 1). If
+  service-to-service calls start failing with 401, every service must
+  share the same `JWT_SECRET`.
 - **Containers keep restarting** — `docker compose logs <service-name>`
   to see the actual error.
 
@@ -472,15 +583,14 @@ cloudguardian-ai/
 
 ## What's next
 
-The core platform is complete across all 6 phases: monitoring,
-anomaly detection with measured precision/recall, autonomous
-remediation with verification, a live explainability dashboard, and
-infrastructure-as-code across three environments — local Docker,
-simulated AWS via LocalStack, and a genuinely real deployment on
-Render. From here, natural next steps if you want to keep going: a
-second remediation executor so the decision-engine can restart the
-Render service too (via Render's API) instead of only Docker
-containers, moving from Docker containers to a real Kubernetes cluster
-(k3s/minikube) for more realistic remediation playbooks like
-horizontal scaling, or polishing the demo flow and README for
-submission.
+The platform now covers all 7 phases: monitoring, anomaly detection with
+measured precision/recall, autonomous remediation (reactive *and*
+predictive) with verification, a live explainability dashboard, AI
+root-cause analysis, JWT auth, CI, structured logging and alerting —
+plus infrastructure-as-code across three environments (local Docker,
+simulated AWS via LocalStack, and a real deployment on Render). Natural
+next steps: a second remediation executor so the decision-engine can
+restart the Render service too (via Render's API), hooking alerting up
+to AWS SNS (boto3 behind the existing `send_alert()`), moving to a real
+Kubernetes cluster (k3s/minikube) for playbooks like horizontal
+scaling, and polishing the demo flow for submission.

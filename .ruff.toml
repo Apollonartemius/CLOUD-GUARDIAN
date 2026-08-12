@@ -1,0 +1,6 @@
+line-length = 120
+exclude = ["services/dashboard", "node_modules", "terraform/.terraform"]
+
+[lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

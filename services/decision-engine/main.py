@@ -36,13 +36,20 @@ Exposes:
 import os
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
+import auth
 import docker
 import psycopg2
+import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from logutil import get_logger, init_logging, log_error, log_info, log_warning
 from psycopg2.extras import RealDictCursor
+
+init_logging()
+logger = get_logger("decision-engine")
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -54,6 +61,20 @@ MIN_ANOMALY_COUNT = int(os.getenv("MIN_ANOMALY_COUNT", 2))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", 0.7))
 COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", 180))
 VERIFICATION_DELAY_SECONDS = int(os.getenv("VERIFICATION_DELAY_SECONDS", 40))
+FORECAST_ENGINE_URL = os.getenv("FORECAST_ENGINE_URL", "http://forecast-engine:8000")
+FORECAST_BREACH_CONFIDENCE_THRESHOLD = float(
+    os.getenv("FORECAST_BREACH_CONFIDENCE_THRESHOLD", 0.8)
+)
+FORECAST_COOLDOWN_SECONDS = int(os.getenv("FORECAST_COOLDOWN_SECONDS", 300))
+AI_AGENT_URL = os.getenv("AI_AGENT_URL", "http://ai-reasoning-agent:8000")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@cloudguardian.ai")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+SERVICE_TOKEN = auth.create_token(subject="decision-engine", role="service")
+
+# Alerting (Phase 7): generic Slack-compatible webhook. AWS SNS can be
+# swapped in behind the same function - it just needs a signed publish.
+ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "")
+ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "cloudguardian")
 
 SERVICES = ["auth-service", "payment-service", "inventory-service"]
 
@@ -64,6 +85,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+auth.install_auth(app)
 
 
 def get_connection():
@@ -85,10 +107,24 @@ def init_db():
             trigger_reason TEXT NOT NULL,
             action_taken TEXT NOT NULL,
             confidence_at_trigger DOUBLE PRECISION NOT NULL,
+            incident_type TEXT NOT NULL DEFAULT 'reactive',  -- reactive | predictive
+            correlation_id TEXT,
             action_started_at TIMESTAMPTZ NOT NULL,
             verified_at TIMESTAMPTZ,
             outcome TEXT NOT NULL DEFAULT 'pending'  -- pending | resolved | escalated | failed
         );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE incidents
+        ADD COLUMN IF NOT EXISTS incident_type TEXT NOT NULL DEFAULT 'reactive';
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE incidents
+        ADD COLUMN IF NOT EXISTS correlation_id TEXT;
         """
     )
     cur.execute(
@@ -140,6 +176,80 @@ def restart_container(service_name: str) -> tuple[bool, str]:
         return False, f"restart failed: {e}"
 
 
+def notify_ai_agent(incident_id: int, service: str, incident_type: str, correlation_id: str):
+    def _send():
+        try:
+            requests.post(
+                f"{AI_AGENT_URL}/agent/analyze-incident",
+                json={
+                    "incident_id": incident_id,
+                    "service": service,
+                    "incident_type": incident_type,
+                    "correlation_id": correlation_id,
+                },
+                headers={
+                    "Authorization": f"Bearer {SERVICE_TOKEN}",
+                    "X-Correlation-ID": correlation_id,
+                },
+                timeout=5,
+            )
+        except Exception as e:
+            log_warning(
+                logger,
+                "ai_agent_notify_failed",
+                incident_id=incident_id,
+                service=service,
+                correlation_id=correlation_id,
+                error=str(e),
+            )
+
+    threading.Thread(target=_send, daemon=True).start()
+
+
+def send_alert(severity: str, message: str, correlation_id: str = None) -> bool:
+    """POST a Slack-compatible alert to ALERT_WEBHOOK_URL (no-op if unset)."""
+    if not ALERT_WEBHOOK_URL:
+        log_info(
+            logger,
+            "alert_skipped_no_webhook",
+            severity=severity,
+            correlation_id=correlation_id,
+        )
+        return False
+    try:
+        resp = requests.post(
+            ALERT_WEBHOOK_URL,
+            json={
+                "channel": ALERT_CHANNEL,
+                "username": "cloudguardian",
+                "text": f"[{severity.upper()}] {message}",
+                "severity": severity,
+                "correlation_id": correlation_id,
+                "source": "decision-engine",
+            },
+            headers={"X-Correlation-ID": correlation_id or ""},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        log_info(
+            logger,
+            "alert_sent",
+            severity=severity,
+            correlation_id=correlation_id,
+            status_code=resp.status_code,
+        )
+        return True
+    except Exception as e:
+        log_error(
+            logger,
+            "alert_failed",
+            severity=severity,
+            correlation_id=correlation_id,
+            error=str(e),
+        )
+        return False
+
+
 def trigger_remediation(cur, conn, service: str, confidences: list, reason_suffix: str = ""):
     avg_conf = sum(confidences) / len(confidences)
     reason = (
@@ -147,6 +257,7 @@ def trigger_remediation(cur, conn, service: str, confidences: list, reason_suffi
         f"avg confidence {avg_conf:.2f}{reason_suffix}"
     )
     now = datetime.now(timezone.utc)
+    correlation_id = str(uuid.uuid4())
 
     success, message = restart_container(service)
     action_taken = "docker_restart" if success else "docker_restart_failed"
@@ -155,15 +266,84 @@ def trigger_remediation(cur, conn, service: str, confidences: list, reason_suffi
     cur.execute(
         """
         INSERT INTO incidents
-            (service_name, trigger_reason, action_taken, confidence_at_trigger, action_started_at, outcome)
-        VALUES (%s, %s, %s, %s, %s, %s)
+            (service_name, trigger_reason, action_taken, confidence_at_trigger,
+             incident_type, correlation_id, action_started_at, outcome)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
-        (service, reason, action_taken, avg_conf, now, outcome),
+        (service, reason, action_taken, avg_conf, "reactive", correlation_id, now, outcome),
     )
     incident_id = cur.fetchone()[0]
     conn.commit()
-    print(f"[decision-engine] Incident #{incident_id}: {service} -> {message} ({reason})")
+    log_info(
+        logger,
+        "incident_triggered",
+        incident_id=incident_id,
+        service=service,
+        incident_type="reactive",
+        correlation_id=correlation_id,
+        action=action_taken,
+        message=message,
+    )
+    send_alert("warning", f"Incident #{incident_id}: {service} -> {message} ({reason})", correlation_id)
+    notify_ai_agent(incident_id, service, "reactive", correlation_id)
+    return incident_id, success, message
+
+
+def check_forecast_breaches() -> list:
+    try:
+        resp = requests.get(
+            f"{FORECAST_ENGINE_URL}/forecast/breach-risk",
+            headers={
+                "Authorization": f"Bearer {SERVICE_TOKEN}",
+                "X-Correlation-ID": "forecast-check",
+            },
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json().get("risks", [])
+    except Exception as e:
+        log_warning(logger, "forecast_engine_unreachable", error=str(e))
+        return []
+
+
+_last_predictive_action: dict = {}
+
+
+def trigger_preemptive_action(cur, conn, service: str, metric: str, risk: float, eta_minutes: float):
+    success, message = restart_container(service)
+    action_taken = "proactive_restart" if success else "proactive_restart_failed"
+    outcome = "pending" if success else "failed"
+    reason = f"forecast breach risk {risk:.2f} for {metric} within ~{eta_minutes:.0f} min"
+    now = datetime.now(timezone.utc)
+    correlation_id = str(uuid.uuid4())
+
+    cur.execute(
+        """
+        INSERT INTO incidents
+            (service_name, trigger_reason, action_taken, confidence_at_trigger,
+             incident_type, correlation_id, action_started_at, outcome)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (service, reason, action_taken, risk, "predictive", correlation_id, now, outcome),
+    )
+    incident_id = cur.fetchone()[0]
+    conn.commit()
+    log_info(
+        logger,
+        "predictive_incident_triggered",
+        incident_id=incident_id,
+        service=service,
+        metric=metric,
+        breach_risk=round(risk, 3),
+        eta_minutes=round(eta_minutes, 1),
+        correlation_id=correlation_id,
+        action=action_taken,
+        message=message,
+    )
+    send_alert("warning", f"PREDICTIVE Incident #{incident_id}: {service} -> {message} ({reason})", correlation_id)
+    notify_ai_agent(incident_id, service, "predictive", correlation_id)
     return incident_id, success, message
 
 
@@ -192,8 +372,22 @@ def verify_pending_incidents(cur, conn):
             (outcome, now, incident_id),
         )
         conn.commit()
-        label = "RESOLVED" if outcome == "resolved" else "ESCALATED (needs human attention)"
-        print(f"[decision-engine] Incident #{incident_id} ({service}): {label}")
+        if outcome == "resolved":
+            log_info(
+                logger,
+                "incident_resolved",
+                incident_id=incident_id,
+                service=service,
+            )
+            send_alert("info", f"Incident #{incident_id} ({service}) resolved", None)
+        else:
+            log_warning(
+                logger,
+                "incident_escalated",
+                incident_id=incident_id,
+                service=service,
+            )
+            send_alert("critical", f"Incident #{incident_id} ({service}) ESCALATED - needs human attention", None)
 
 
 def _decision_loop():
@@ -202,7 +396,7 @@ def _decision_loop():
             init_db()
             break
         except Exception as e:
-            print(f"[decision-engine] waiting for database: {e}")
+            log_error(logger, "waiting_for_database", error=str(e))
             time.sleep(3)
 
     while True:
@@ -229,13 +423,44 @@ def _decision_loop():
 
                 trigger_remediation(cur, conn, service, confidences)
 
+            # 1b. Predictive path: act on forecasted breaches BEFORE they happen
+            risks = check_forecast_breaches()
+            for risk in risks:
+                service = risk.get("service")
+                if service not in SERVICES:
+                    continue
+                risk_score = float(risk.get("breach_risk", 0))
+                if risk_score < FORECAST_BREACH_CONFIDENCE_THRESHOLD:
+                    continue
+                now = time.time()
+                last_predictive = _last_predictive_action.get(service)
+                if last_predictive and now - last_predictive < FORECAST_COOLDOWN_SECONDS:
+                    continue
+                last = last_incident(cur, service)
+                if last is not None:
+                    _, last_started, last_outcome = last
+                    seconds_since = (
+                        datetime.now(timezone.utc) - last_started
+                    ).total_seconds()
+                    if seconds_since < COOLDOWN_SECONDS:
+                        continue
+                trigger_preemptive_action(
+                    cur,
+                    conn,
+                    service,
+                    risk.get("metric", "unknown"),
+                    risk_score,
+                    float(risk.get("eta_minutes", 0)),
+                )
+                _last_predictive_action[service] = now
+
             # 2. Verify any incidents whose grace period has elapsed
             verify_pending_incidents(cur, conn)
 
             cur.close()
             conn.close()
         except Exception as e:
-            print(f"[decision-engine] ERROR in decision loop: {e}")
+            log_error(logger, "decision_loop_error", error=str(e))
 
         time.sleep(DECISION_CHECK_INTERVAL_SECONDS)
 
@@ -248,6 +473,16 @@ def health():
     return {"status": "healthy"}
 
 
+@app.post("/auth/login")
+def login(payload: dict):
+    email = payload.get("email")
+    password = payload.get("password")
+    if email != ADMIN_EMAIL or password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    token = auth.create_token(subject=email, role="operator")
+    return {"token": token, "token_type": "bearer", "expires_in": auth.TOKEN_TTL_SECONDS, "email": email}
+
+
 @app.get("/incidents/current")
 def current_incidents(minutes: int = Query(30, ge=1, le=1440)):
     conn = get_connection()
@@ -255,7 +490,7 @@ def current_incidents(minutes: int = Query(30, ge=1, le=1440)):
     cur.execute(
         """
         SELECT id, service_name, trigger_reason, action_taken, confidence_at_trigger,
-               action_started_at, verified_at, outcome
+               incident_type, action_started_at, verified_at, outcome
         FROM incidents
         WHERE action_started_at > now() - (%s || ' minutes')::interval
         ORDER BY action_started_at DESC
@@ -275,7 +510,7 @@ def incidents_history(service: str = Query(...), minutes: int = Query(120, ge=1,
     cur.execute(
         """
         SELECT id, trigger_reason, action_taken, confidence_at_trigger,
-               action_started_at, verified_at, outcome
+               incident_type, action_started_at, verified_at, outcome
         FROM incidents
         WHERE service_name = %s AND action_started_at > now() - (%s || ' minutes')::interval
         ORDER BY action_started_at ASC

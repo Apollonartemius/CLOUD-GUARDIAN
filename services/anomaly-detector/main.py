@@ -29,12 +29,17 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import auth
 import pandas as pd
 import psycopg2
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from logutil import get_logger, init_logging, log_error, log_info, log_warning
 from psycopg2.extras import RealDictCursor
 from sklearn.ensemble import IsolationForest
+
+init_logging()
+logger = get_logger("anomaly-detector")
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -56,6 +61,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+auth.install_auth(app)
 
 
 def get_connection():
@@ -188,7 +194,7 @@ def _detection_loop():
             init_db()
             break
         except Exception as e:
-            print(f"[anomaly-detector] waiting for database: {e}")
+            log_error(logger, "waiting_for_database", error=str(e))
             time.sleep(3)
 
     while True:
@@ -207,16 +213,29 @@ def _detection_loop():
                     now = datetime.now(timezone.utc)
                     for metric, score, confidence in zscore_hits:
                         _record_anomaly(cur, service, "zscore", metric, score, confidence, now)
-                        print(f"[anomaly-detector] ZSCORE {service}.{metric} z={score:.2f} conf={confidence:.2f}")
+                        log_info(
+                            logger,
+                            "zscore_anomaly_detected",
+                            service=service,
+                            metric=metric,
+                            zscore=round(score, 2),
+                            confidence=round(confidence, 2),
+                        )
                     if if_hit:
                         score, confidence = if_hit
                         _record_anomaly(cur, service, "isolation_forest", None, score, confidence, now)
-                        print(f"[anomaly-detector] ISOFOREST {service} score={score:.2f} conf={confidence:.2f}")
+                        log_info(
+                            logger,
+                            "isolation_forest_anomaly_detected",
+                            service=service,
+                            score=round(score, 2),
+                            confidence=round(confidence, 2),
+                        )
                     conn.commit()
                     cur.close()
                     conn.close()
             except Exception as e:
-                print(f"[anomaly-detector] ERROR checking {service}: {e}")
+                log_warning(logger, "anomaly_check_error", service=service, error=str(e))
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 

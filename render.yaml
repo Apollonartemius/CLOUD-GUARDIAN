@@ -33,3 +33,35 @@ services:
         value: "280"
       - key: BASE_LATENCY_MS
         value: "55"
+  - type: web
+    name: cloudguardian-forecast-engine
+    runtime: docker
+    plan: free
+    dockerfilePath: ./services/forecast-engine/Dockerfile
+    dockerContext: ./services/forecast-engine
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: CPU_THRESHOLD_PERCENT
+        value: "85"
+      - key: MEMORY_THRESHOLD_MB
+        value: "800"
+      - key: LATENCY_THRESHOLD_MS
+        value: "400"
+      - key: ERROR_RATE_THRESHOLD
+        value: "0.15"
+  - type: web
+    name: cloudguardian-ai-reasoning-agent
+    runtime: docker
+    plan: free
+    dockerfilePath: ./services/ai-reasoning-agent/Dockerfile
+    dockerContext: ./services/ai-reasoning-agent
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: FORECAST_ENGINE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false

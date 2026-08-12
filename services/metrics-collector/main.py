@@ -21,11 +21,16 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import auth
 import psycopg2
 import requests
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from logutil import get_logger, init_logging, log_error, log_info
 from psycopg2.extras import RealDictCursor
+
+init_logging()
+logger = get_logger("metrics-collector")
 
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", 15))
@@ -42,6 +47,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+auth.install_auth(app)
 
 
 def get_connection():
@@ -162,15 +168,15 @@ def _poll_loop():
             init_db()
             break
         except Exception as e:
-            print(f"[metrics-collector] waiting for database: {e}")
+            log_error(logger, "waiting_for_database", error=str(e))
             time.sleep(3)
 
     while True:
         try:
             now = _poll_once()
-            print(f"[metrics-collector] polled at {now.isoformat()}")
+            log_info(logger, "metrics_polled", sample_time=now.isoformat())
         except Exception as e:
-            print(f"[metrics-collector] ERROR during poll: {e}")
+            log_error(logger, "poll_error", error=str(e))
         time.sleep(POLL_INTERVAL_SECONDS)
 
 

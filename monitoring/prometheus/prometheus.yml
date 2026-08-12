@@ -15,6 +15,14 @@ scrape_configs:
     static_configs:
       - targets: ["inventory-service:8000"]
 
+  - job_name: "forecast-engine"
+    static_configs:
+      - targets: ["forecast-engine:8000"]
+
+  - job_name: "ai-reasoning-agent"
+    static_configs:
+      - targets: ["ai-reasoning-agent:8000"]
+
   - job_name: "prometheus"
     static_configs:
       - targets: ["localhost:9090"]

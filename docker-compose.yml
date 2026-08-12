@@ -90,6 +90,10 @@ services:
       CONFIDENCE_THRESHOLD: 0.7
       COOLDOWN_SECONDS: 180
       VERIFICATION_DELAY_SECONDS: 40
+      FORECAST_ENGINE_URL: http://forecast-engine:8000
+      FORECAST_BREACH_CONFIDENCE_THRESHOLD: 0.8
+      FORECAST_COOLDOWN_SECONDS: 300
+      AI_AGENT_URL: http://ai-reasoning-agent:8000
     ports:
       - "8030:8000"
     volumes:
@@ -100,6 +104,46 @@ services:
       postgres:
         condition: service_healthy
       anomaly-detector:
+        condition: service_started
+
+  forecast-engine:
+    build: ./services/forecast-engine
+    container_name: forecast-engine
+    environment:
+      DATABASE_URL: postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian
+      FORECAST_RETRAIN_INTERVAL_SECONDS: 300
+      FORECAST_WINDOW_MINUTES: 30
+      FORECAST_HORIZON_MINUTES: 10
+      CPU_THRESHOLD_PERCENT: 85
+      MEMORY_THRESHOLD_MB: 800
+      LATENCY_THRESHOLD_MS: 400
+      ERROR_RATE_THRESHOLD: 0.15
+    ports:
+      - "8040:8000"
+    networks:
+      - cloudguardian
+    depends_on:
+      postgres:
+        condition: service_healthy
+      metrics-collector:
+        condition: service_started
+
+  ai-reasoning-agent:
+    build: ./services/ai-reasoning-agent
+    container_name: ai-reasoning-agent
+    environment:
+      DATABASE_URL: postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian
+      FORECAST_ENGINE_URL: http://forecast-engine:8000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+    ports:
+      - "8050:8000"
+    networks:
+      - cloudguardian
+    depends_on:
+      postgres:
+        condition: service_healthy
+      forecast-engine:
         condition: service_started
 
   grafana:

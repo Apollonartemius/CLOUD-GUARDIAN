@@ -23,5 +23,9 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 
-# Terraform 
-**/.terraform/ *.tfstate *.tfstate.backup *.tfstate.*.backup crash.log
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+crash.log
