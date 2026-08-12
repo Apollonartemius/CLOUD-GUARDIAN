@@ -23,6 +23,11 @@ scrape_configs:
     static_configs:
       - targets: ["ai-reasoning-agent:8000"]
 
+  - job_name: "cloud-service-render"
+    scheme: https
+    static_configs:
+      - targets: ["cloudguardian-cloud-service.onrender.com"]
+
   - job_name: "prometheus"
     static_configs:
       - targets: ["localhost:9090"]
