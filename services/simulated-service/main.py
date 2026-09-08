@@ -83,7 +83,8 @@ def _simulate_loop():
                 if ctype == "cpu_spike":
                     target_cpu = min(98, BASE_CPU * 4)
                 elif ctype == "memory_leak":
-                    _state["mem"] += random.uniform(5, 15)
+                    rate = _state.get("leak_mb_per_tick", None)
+                    _state["mem"] += rate if rate else random.uniform(5, 15)
                     target_mem = _state["mem"]
                 elif ctype == "latency_spike":
                     target_latency = BASE_LATENCY_MS * 8
@@ -132,17 +133,23 @@ def metrics():
 
 
 @app.post("/chaos/{chaos_type}")
-def trigger_chaos(chaos_type: str, duration_seconds: int = 60):
+def trigger_chaos(
+    chaos_type: str,
+    duration_seconds: int = 60,
+    leak_mb_per_tick: float = 0,
+):
     valid_types = {"cpu_spike", "memory_leak", "latency_spike", "error_storm"}
     if chaos_type not in valid_types:
         return {"error": f"invalid chaos_type, choose from {sorted(valid_types)}"}
     with _lock:
         _state["chaos_type"] = chaos_type
         _state["chaos_until"] = time.time() + duration_seconds
+        _state["leak_mb_per_tick"] = leak_mb_per_tick or 0
     return {
         "service": SERVICE_NAME,
         "chaos_injected": chaos_type,
         "duration_seconds": duration_seconds,
+        "leak_mb_per_tick": leak_mb_per_tick or 0,
     }
 
 
@@ -151,5 +158,6 @@ def stop_chaos():
     with _lock:
         _state["chaos_type"] = None
         _state["chaos_until"] = 0.0
+        _state["leak_mb_per_tick"] = 0
         _state["mem"] = BASE_MEM
     return {"service": SERVICE_NAME, "chaos_stopped": True}
