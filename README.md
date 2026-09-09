@@ -20,6 +20,11 @@
   a **LocalStack**-simulated AWS S3 bucket represents one cloud in the
   multi-cloud story, and a real deployment on **Render** (free, no
   credit card) represents a genuinely non-simulated second cloud.
+- **Phase 8:** the monitored services run on a real **k3d Kubernetes**
+  cluster with self-healing (rollout restarts) and autoscaling (HPA), a
+  real **Google Cloud Run** deployment (free-tier, serverless, scales to
+  zero) plays the Google cloud role in the multi-cloud story, secrets
+  move to **Vault**, and operator login gains **OIDC SSO**.
 - **Phase 7:** predictive intelligence + production hardening — a
   **forecast-engine** (Holt-Winters) that predicts SLO breaches before
   they happen so the platform can act *proactively*, an **AI
@@ -455,6 +460,56 @@ The dashboard's **AI Copilot** panel wraps all of this.
 
 ---
 
+## Part 11d — (Optional) Deploy to Google Cloud Run, stays $0 (Phase 8)
+
+The `terraform/gcp-real/` blueprint now deploys the same service as a
+**serverless container on Google Cloud Run** instead of a VM. Cloud Run is
+a real managed Google Cloud service: HTTPS by default, auto-scales down to
+zero when idle, and is **$0 within the free tier** (2M requests +
+180k vCPU-seconds/month) as long as the region is `us-central1`,
+`us-west1`, or `us-east1`. It needs a GCP project with billing enabled
+(Cloud Run is "free up to a limit", not "no credit card").
+
+1. **Push your container to a public Docker Hub repo** (Cloud Run pulls
+   from there — no need to build in the cloud):
+   ```powershell
+   docker image ls cloudguardian-ai-simulated-service:latest
+   docker tag cloudguardian-ai-simulated-service:latest <you>/cloudguardian-simulated-service:latest
+   docker push <you>/cloudguardian-simulated-service:latest
+   ```
+2. **Install + log into `gcloud`** (one-time, your Google account):
+   ```powershell
+   # download the gcloud CLI from https://cloud.google.com/sdk, then:
+   gcloud auth login
+   gcloud config set project <project-id>
+   ```
+3. **Apply the terraform** (it also enables `run.googleapis.com`):
+   ```powershell
+   cd terraform/gcp-real
+   terraform apply -var project_id=<project-id> -var image=docker.io/<you>/cloudguardian-simulated-service:latest
+   ```
+   At the end it prints `health_check_url` and a ready-made
+   `prometheus_scrape_line` — paste that into
+   `monitoring/prometheus/prometheus.yml` and `docker compose restart prometheus`.
+
+4. Confirm it's alive — open the printed URL in your browser; you should
+   see `{"status": "healthy", "service": "cloud-service-gcp"}`.
+
+Like Render, this is a genuinely **non-simulated second/third cloud
+environment** your local platform watches. The same honest limitations
+apply: the decision-engine's `k8s_rollout_restart` remediation targets
+your local k3d cluster, so it can't restart this or the Render service
+(it logs `outcome: failed` if it tries) — the natural next step, noted in
+your report, is a serverless-API remediation executor.
+
+**Destroy it when done** so there are no surprise charges:
+```powershell
+cd terraform/gcp-real
+terraform destroy -var project_id=<project-id>
+```
+
+---
+
 ## Part 12 — Shutting down
 
 Reverse order from startup:
@@ -500,7 +555,7 @@ cloudguardian-ai/
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   └── gcp-real/                   # Phase 6: real GCP deployment blueprint
+│   └── gcp-real/                   # Phase 8: real GCP cloud (Cloud Run, free tier)
 ├── scripts/
 │   └── evaluate_detector.py        # Phase 3: precision/recall evaluation harness
 ├── services/

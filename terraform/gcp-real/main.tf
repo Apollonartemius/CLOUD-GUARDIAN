@@ -1,15 +1,19 @@
-# CloudGuardian AI - Real Cloud Infrastructure on GCP (Phase 6)
+# CloudGuardian AI - Real Cloud on GCP (Cloud Run, FREE) (Phase 8)
 # -------------------------------------------------------------------
-# This is the ONE genuinely real (non-simulated) piece of the
-# "multi-cloud" story: an actual e2-micro VM on Google Cloud's Always
-# Free tier, running the exact same simulated-service code that runs
-# locally in Docker - just on real cloud infrastructure instead of
-# your laptop.
+# The genuinely real, non-simulated piece of the multi-cloud story.
+# Instead of a manually-managed VM, the monitored service runs as a
+# container on Google Cloud Run - managed, serverless, HTTPS by default,
+# and it auto-scales DOWN TO ZERO when idle (and back up on demand).
 #
-# Cost: $0, as long as you stay within the Always Free limits -
-# 1 e2-micro instance in us-west1/us-central1/us-east1, which is
-# exactly what this provisions. See the main README for account
-# setup and a cost-safety checklist before running this.
+# COST: $0 within the Cloud Run free tier when the region is one of
+#   us-central1 / us-west1 / us-east1 (2M requests + 180k vCPU-seconds +
+#   360k GB-seconds per month). A demo that goes idle between use stays
+#   comfortably inside this. It DOES require a GCP project with billing
+#   enabled (Cloud Run is "always free up to a limit", not "no card").
+#
+# How it fits: local Prometheus scrapes this public HTTPS /metrics URL
+# exactly like it scrapes the Render deployment - so the dashboard shows
+# a service actually running on real Google Cloud.
 
 terraform {
   required_providers {
@@ -25,55 +29,66 @@ provider "google" {
   region  = var.region
 }
 
-# Reserved (not ephemeral) so the IP doesn't change if the VM is
-# recreated - lets you hardcode it once in prometheus.yml.
-resource "google_compute_address" "static_ip" {
-  name   = "cloudguardian-static-ip"
-  region = var.region
+# Cloud Run needs the run.googleapis.com API switched on for the project.
+resource "google_project_service" "run_api" {
+  service            = "run.googleapis.com"
+  disable_on_destroy = false
 }
 
-resource "google_compute_firewall" "allow_service_port" {
-  name    = "cloudguardian-allow-8000"
-  network = "default"
+resource "google_cloud_run_v2_service" "cloud_service" {
+  name     = "cloudguardian-cloud-service"
+  location = var.region
+  # A small static suffix keeps the URL stable-ish across apply/teardown;
+  # the full hostname is printed in outputs.tf (never put secrets here).
+  depends_on = [google_project_service.run_api]
 
-  allow {
-    protocol = "tcp"
-    ports    = ["8000"]
+  template {
+    containers {
+      image = var.image
+      ports {
+        container_port = 8080 # Cloud Run injects PORT=8080; the Dockerfile honors it
+      }
+
+      env {
+        name  = "SERVICE_NAME"
+        value = var.service_name
+      }
+      env {
+        name  = "BASE_CPU"
+        value = tostring(var.base_cpu)
+      }
+      env {
+        name  = "BASE_MEM"
+        value = tostring(var.base_mem)
+      }
+      env {
+        name  = "BASE_LATENCY_MS"
+        value = tostring(var.base_latency_ms)
+      }
+
+      # 0.5 vCPU / 512MiB - tiny, cheap, plenty for metric simulation.
+      resources {
+        limits = {
+          cpu    = "0.5"
+          memory = "512Mi"
+        }
+      }
+    }
+
+    scaling {
+      min_instance_count = 0 # scale-to-zero when idle (this is what keeps it free)
+      max_instance_count = 2
+    }
+    service_account = null # default compute SA is enough for a stateless metric endpoint
   }
-
-  # Open to the internet so your local Prometheus can scrape it - fine
-  # for a learning project, but note this in your report as something
-  # you'd lock down (e.g. to your own IP) in a real deployment.
-  source_ranges = ["0.0.0.0/0"]
-  target_tags   = ["cloudguardian-service"]
 }
 
-resource "google_compute_instance" "cloud_service" {
-  name         = "cloudguardian-cloud-service"
-  machine_type = "e2-micro" # Always Free eligible machine type
-  zone         = var.zone
-
-  tags = ["cloudguardian-service"]
-
-  boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
-      size  = 10 # GB - well within the 30GB Always Free disk allowance
-    }
-  }
-
-  network_interface {
-    network = "default"
-    access_config {
-      nat_ip = google_compute_address.static_ip.address
-    }
-  }
-
-  metadata_startup_script = templatefile("${path.module}/startup-script.sh.tpl", {
-    main_py_content = file("${path.module}/../../services/simulated-service/main.py")
-    service_name    = var.service_name
-    base_cpu        = var.base_cpu
-    base_mem        = var.base_mem
-    base_latency    = var.base_latency
-  })
+# Allow anyone to invoke it (public /metrics + /health) - same posture as the
+# Render deployment. Note this in the report as "would restrict with IAP/API
+# key in production".
+resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
+  location = google_cloud_run_v2_service.cloud_service.location
+  name     = google_cloud_run_v2_service.cloud_service.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }

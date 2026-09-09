@@ -4,34 +4,37 @@ variable "project_id" {
 }
 
 variable "region" {
-  description = "Must be us-west1, us-central1, or us-east1 to stay within the Always Free e2-micro eligibility"
+  description = "Must be us-central1, us-west1, or us-east1 to stay within the Cloud Run free tier"
   type        = string
   default     = "us-central1"
 }
 
-variable "zone" {
-  description = "A zone within the chosen region"
+variable "image" {
+  description = "Container image to run. Public Docker Hub repo is simplest - push your local image with: docker tag cloudguardian-ai-simulated-service:latest <dockerhub-user>/cloudguardian-simulated-service:latest && docker push <dockerhub-user>/cloudguardian-simulated-service:latest"
   type        = string
-  default     = "us-central1-a"
+  default     = "docker.io/library/cloudguardian-simulated-service:latest"
 }
 
 variable "service_name" {
-  description = "Name this service reports as in its metrics"
+  description = "Name this service reports as in its metrics (label seen in Grafana/Prometheus)"
   type        = string
   default     = "cloud-service-gcp"
 }
 
 variable "base_cpu" {
-  type    = number
-  default = 18
+  description = "Baseline CPU percentage the simulated service reports"
+  type        = number
+  default     = 18
 }
 
 variable "base_mem" {
-  type    = number
-  default = 280
+  description = "Baseline memory MB the simulated service reports"
+  type        = number
+  default     = 280
 }
 
-variable "base_latency" {
-  type    = number
-  default = 55
+variable "base_latency_ms" {
+  description = "Baseline request latency in milliseconds the simulated service reports"
+  type        = number
+  default     = 55
 }

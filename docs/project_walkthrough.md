@@ -101,10 +101,9 @@ cloudguardian-ai/
     │   ├── variables.tf
     │   └── outputs.tf
     ├── gcp-real/
-    │   ├── main.tf                  # real GCE instance blueprint
+    │   ├── main.tf                  # real Google Cloud Run service (free tier, serverless)
     │   ├── variables.tf
-    │   ├── outputs.tf
-    │   └── startup-script.sh.tpl
+    │   └── outputs.tf
     └── local-infra/
         ├── main.tf                  # creates cloudguardian-net + 3 monitored services
         ├── variables.tf
@@ -404,10 +403,11 @@ Uses the **real AWS provider pointed at LocalStack** — the exact same `.tf` co
 ### 2. GCP Real ([terraform/gcp-real/](file:///d:/CSE%20eng/LY-btech/MINOR%20PROJ-%20CC/cloudguardian-ai/terraform/gcp-real))
 
 For **real GCP deployment**:
-- Creates a **GCE instance** (`e2-small`, Debian 12) with Docker pre-installed via a startup-script template
-- Configures a **firewall rule** opening port 8000 (the platform's container port)
-- Startup script clones the repo and runs `docker-compose up -d`
-- Outputs: instance IP, SSH command, dashboard URL
+- Creates a **Cloud Run service** (`cloudguardian-cloud-service`) running the simulated-service container — serverless, HTTPS by default, auto-scales to zero
+- **Free tier** eligible when the region is `us-central1` / `us-west1` / `us-east1` (2M requests + 180k vCPU-seconds/month)
+- Grants public `roles/run.invoker` so local Prometheus can scrape `/metrics`
+- Requires the image pushed to a public Docker Hub repo (Cloud Run pulls it directly)
+- Outputs: the HTTPS service URL and a ready-made Prometheus scrape snippet
 
 ### 3. Local Infra ([terraform/local-infra/](file:///d:/CSE%20eng/LY-btech/MINOR%20PROJ-%20CC/cloudguardian-ai/terraform/local-infra))
 
