@@ -35,6 +35,22 @@ spec:
           ports:
             - containerPort: 8000
               name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
           env:
             - name: SERVICE_NAME
               value: "auth-service"
@@ -78,6 +94,22 @@ spec:
           ports:
             - containerPort: 8000
               name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
           env:
             - name: SERVICE_NAME
               value: "payment-service"
@@ -121,6 +153,22 @@ spec:
           ports:
             - containerPort: 8000
               name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
           env:
             - name: SERVICE_NAME
               value: "inventory-service"
@@ -196,9 +244,15 @@ spec:
       name: http
 ---
 # HorizontalPodAutoscalers - the "scale" half of industrial self-healing.
-# When a pod's CPU crosses its request threshold (here 50% of requested CPU),
-# Kubernetes automatically adds replicas. The decision-engine's chaos tests
-# drive this so you can watch a single payment pod scale out under load.
+# When a pod's CPU crosses its request threshold (a percentage of requested
+# CPU), Kubernetes automatically adds replicas. The decision-engine's chaos
+# tests drive this so you can watch a single payment pod scale out under load.
+#
+# Payment uses a higher threshold (80%) than the others because its simulated
+# base CPU (~25m) sits very close to a 50% threshold, which made the HPA
+# scale up and down on ordinary traffic wobble. 80% keeps normal traffic
+# below the trigger while a cpu_spike chaos (which jumps to ~4x base CPU)
+# still crosses it cleanly.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -217,7 +271,7 @@ spec:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 50
+          averageUtilization: 80
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

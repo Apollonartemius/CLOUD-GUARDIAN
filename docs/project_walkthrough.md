@@ -208,7 +208,7 @@ graph TD
 - **Chaos injection endpoints**: `POST /chaos/{cpu_spike|memory_leak|latency_spike|error_storm}?duration_seconds=N` to trigger failures; `POST /chaos/stop` to recover early
 - **Health endpoint**: `GET /health` returns current status and active chaos conditions
 - **Metrics endpoint**: `GET /metrics` exposes Prometheus metrics (`service_cpu_usage_percent`, `service_memory_usage_mb`, request latency histogram, request/error counters) labelled per service
-- Background thread generates realistic metric variations; chaos self-heals when the duration elapses
+- Background thread drives the simulated behaviour, backing the gauges with **real effects**: `cpu_spike` burns real CPU, `memory_leak` allocates real heap, and the configured latency/error values are actually applied to every request (the `/` endpoint sleeps the latency and returns real 5xx during an error storm). `/health` and `/metrics` stay fast so k8s probes and scrapers are never affected; chaos self-heals when the duration elapses
 
 > The monitored fleet is intentionally left **open (no auth)** so chaos can be injected freely during demos — the platform services around them are the ones that are locked down.
 

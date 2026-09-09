@@ -127,11 +127,15 @@ _state_lock = threading.Lock()
 def _poll_once():
     cpu = prom_instant_query("service_cpu_usage_percent")
     mem = prom_instant_query("service_memory_usage_mb")
-    # average latency over the last minute = rate(sum)/rate(count) on the histogram
+    # average latency: real calls sleep the injected latency, so the histogram
+    # mean reflects the actual request-path latency a user experiences
     latency = prom_instant_query(
         "rate(service_request_latency_ms_sum[1m]) / rate(service_request_latency_ms_count[1m])"
     )
-    errors = prom_instant_query("rate(service_errors_total[1m])")
+    # error_rate: gauge emitted by the service = real probability of a 5xx
+    # (kept as a stable value rather than error/s so the detector's
+    # baseline/z-score never sees artificial noise from idle vs. traffic)
+    errors = prom_instant_query("service_error_rate")
 
     now = datetime.now(timezone.utc)
     conn = get_connection()

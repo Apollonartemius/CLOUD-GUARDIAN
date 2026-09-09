@@ -6,13 +6,25 @@ behaviour (CPU, memory, latency, error rate) so we have something
 realistic to monitor before wiring up real cloud infrastructure.
 
 It exposes:
-  GET  /            -> basic info
-  GET  /health       -> health check
-  GET  /metrics       -> Prometheus metrics
+  GET  /            -> basic info (this is the "workload" endpoint - it is
+                       subject to the simulated CPU-independent effects:
+                       the configured latency is *actually slept* on every
+                       request, and during an error_storm a fraction of
+                       requests return HTTP 500)
+  GET  /health       -> health check (never slowed or failed on purpose, so
+                       k8s probes and load balancers can still see the pod)
+  GET  /metrics       -> Prometheus metrics (also exempt from injected delay)
   POST /chaos/{type}  -> inject a synthetic failure (for testing detection/self-healing)
   POST /chaos/stop     -> stop any active chaos
 
 Chaos types: cpu_spike, memory_leak, latency_spike, error_storm
+
+Truthfulness of the fault model:
+  - cpu_spike      real CPU burn threads  -> kubelet/metrics-server/HPA see real load
+  - memory_leak    real heap allocations  -> container RSS actually grows
+  - latency_spike  real time.sleep per / request -> callers actually feel it
+  - error_storm    real HTTP 500 responses on / -> callers actually get errors
+The /metrics gauges reflect those realities rather than a parallel fiction.
 """
 
 import os
@@ -22,6 +34,7 @@ import time
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     Counter,
@@ -34,6 +47,7 @@ SERVICE_NAME = os.getenv("SERVICE_NAME", "demo-service")
 BASE_CPU = float(os.getenv("BASE_CPU", 20))
 BASE_MEM = float(os.getenv("BASE_MEM", 300))
 BASE_LATENCY_MS = float(os.getenv("BASE_LATENCY_MS", 50))
+BASE_ERROR_RATE = float(os.getenv("BASE_ERROR_RATE", 0.01))
 
 app = FastAPI(title=SERVICE_NAME)
 # Only the dashboard (and a handful of dev origins) may call these APIs from
@@ -57,20 +71,21 @@ app.add_middleware(
 # ---- Prometheus metrics ----
 cpu_gauge = Gauge("service_cpu_usage_percent", "Simulated CPU usage percent", ["service"])
 mem_gauge = Gauge("service_memory_usage_mb", "Simulated memory usage MB", ["service"])
+error_rate_gauge = Gauge("service_error_rate", "Fraction of requests failing", ["service"])
 latency_hist = Histogram(
     "service_request_latency_ms",
     "Simulated request latency ms",
     ["service"],
     buckets=(10, 25, 50, 100, 200, 400, 800, 1600, 3200),
 )
-request_counter = Counter("service_requests_total", "Total simulated requests", ["service"])
-error_counter = Counter("service_errors_total", "Total simulated errors", ["service"])
+request_counter = Counter("service_requests_total", "Total real requests handled", ["service"])
+error_counter = Counter("service_errors_total", "Total real 5xx responses sent", ["service"])
 
 _state = {
     "cpu": BASE_CPU,
     "mem": BASE_MEM,
     "latency": BASE_LATENCY_MS,
-    "error_rate": 0.01,
+    "error_rate": BASE_ERROR_RATE,
     "chaos_until": 0.0,
     "chaos_type": None,
 }
@@ -78,6 +93,9 @@ _lock = threading.Lock()
 
 _burn_stop = threading.Event()
 _burn_stop.set()
+
+# Real heap used by the memory_leak chaos (freed by /chaos/stop).
+_leak_buf = bytearray()
 
 
 def _burn_cpu():
@@ -87,16 +105,21 @@ def _burn_cpu():
 
 
 def _simulate_loop():
-    """Background thread that continuously updates fake metrics."""
+    """Background thread that drives the simulated behaviour.
+
+    cpu_spike burns real CPU and memory_leak allocates real heap, so the
+    gauges below track the *actual* effect being delivered, not a separate
+    fiction. The latency value is the delay the / endpoint really sleeps
+    per request, and error_rate is the real probability of a 500.
+    """
     while True:
         with _lock:
             now = time.time()
             chaos_active = now < _state["chaos_until"]
 
             target_cpu = BASE_CPU
-            target_mem = BASE_MEM
             target_latency = BASE_LATENCY_MS
-            error_rate = 0.01
+            error_rate = BASE_ERROR_RATE
 
             if chaos_active:
                 ctype = _state["chaos_type"]
@@ -107,9 +130,8 @@ def _simulate_loop():
                         for _ in range(2):
                             threading.Thread(target=_burn_cpu, daemon=True).start()
                 elif ctype == "memory_leak":
-                    rate = _state.get("leak_mb_per_tick", None)
-                    _state["mem"] += rate if rate else random.uniform(5, 15)
-                    target_mem = _state["mem"]
+                    rate = _state.get("leak_mb_per_tick", 0) or random.uniform(5, 15)
+                    _leak_buf.extend(bytes(int(rate * 1024 * 1024)))
                 elif ctype == "latency_spike":
                     target_latency = BASE_LATENCY_MS * 8
                 elif ctype == "error_storm":
@@ -123,8 +145,11 @@ def _simulate_loop():
             _state["cpu"] += (target_cpu - _state["cpu"]) * 0.3 + random.uniform(-2, 2)
             _state["cpu"] = max(1, min(100, _state["cpu"]))
 
-            if not (chaos_active and _state["chaos_type"] == "memory_leak"):
-                _state["mem"] += (target_mem - _state["mem"]) * 0.2 + random.uniform(-3, 3)
+            leaked_mb = len(_leak_buf) / (1024 * 1024)
+            if leaked_mb > 0:
+                _state["mem"] = BASE_MEM + leaked_mb
+            else:
+                _state["mem"] += (BASE_MEM - _state["mem"]) * 0.2 + random.uniform(-3, 3)
                 _state["mem"] = max(50, _state["mem"])
 
             _state["latency"] += (target_latency - _state["latency"]) * 0.3 + random.uniform(-3, 3)
@@ -133,10 +158,10 @@ def _simulate_loop():
 
             cpu_gauge.labels(service=SERVICE_NAME).set(_state["cpu"])
             mem_gauge.labels(service=SERVICE_NAME).set(_state["mem"])
+            error_rate_gauge.labels(service=SERVICE_NAME).set(_state["error_rate"])
+            # one sample per tick of the latency the / endpoint is serving,
+            # so the histogram has a value even between real requests
             latency_hist.labels(service=SERVICE_NAME).observe(_state["latency"])
-            request_counter.labels(service=SERVICE_NAME).inc(random.randint(5, 20))
-            if random.random() < _state["error_rate"]:
-                error_counter.labels(service=SERVICE_NAME).inc()
 
         time.sleep(2)
 
@@ -146,7 +171,30 @@ threading.Thread(target=_simulate_loop, daemon=True).start()
 
 @app.get("/")
 def root():
-    return {"service": SERVICE_NAME, "status": "running"}
+    """The simulated workload endpoint - reflects the injected behaviour."""
+    with _lock:
+        delay_ms = _state["latency"]
+        err_rate = _state["error_rate"]
+    start = time.perf_counter()
+    time.sleep(delay_ms / 1000.0)
+    latency_ms = (time.perf_counter() - start) * 1000.0
+    latency_hist.labels(service=SERVICE_NAME).observe(latency_ms)
+    request_counter.labels(service=SERVICE_NAME).inc()
+    if random.random() < err_rate:
+        error_counter.labels(service=SERVICE_NAME).inc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "service": SERVICE_NAME,
+                "status": "error",
+                "latency_ms": round(latency_ms, 1),
+            },
+        )
+    return {
+        "service": SERVICE_NAME,
+        "status": "running",
+        "latency_ms": round(latency_ms, 1),
+    }
 
 
 @app.get("/health")
@@ -186,5 +234,5 @@ def stop_chaos():
         _state["chaos_type"] = None
         _state["chaos_until"] = 0.0
         _state["leak_mb_per_tick"] = 0
-        _state["mem"] = BASE_MEM
+        _leak_buf.clear()
     return {"service": SERVICE_NAME, "chaos_stopped": True}

@@ -1,0 +1,52 @@
+# CloudGuardian AI - Prometheus recording & alerting rules
+# ---------------------------------------------------------------------------
+# Rules evaluate every `evaluation_interval` (5s). Alerts surface in the
+# Prometheus "Alerts" UI and the Grafana alerting dashboards. Delivering
+# them off-box (email/PagerDuty/webhook) would be done with an Alertmanager
+# receiver config - local/demo deployments have no external receiver.
+# ---------------------------------------------------------------------------
+
+groups:
+  - name: cloudguardian-recording
+    rules:
+      - record: service_error_rate:max_over_5m
+        expr: max_over_time(service_error_rate[5m])
+
+  - name: cloudguardian-alerts
+    rules:
+      - alert: MonitoredServiceDown
+        # fleet services are scraped via host.nodeports 8001-8003
+        expr: up{job=~"auth-service|payment-service|inventory-service"} == 0
+        for: 90s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} unreachable"
+          description: "Prometheus cannot scrape {{ $labels.job }} ({{ $labels.instance }}). The service or its NodePort mapping may be down."
+
+      - alert: PlatformServiceDown
+        expr: up{job=~"decision-engine|anomaly-detector|metrics-collector|forecast-engine|ai-reasoning-agent"} == 0
+        for: 90s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} unreachable"
+          description: "Core SaaS component {{ $labels.job }} is not being scraped."
+
+      - alert: ServiceErrorRateHigh
+        expr: service_error_rate > 0.15
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} error rate {{ $value | humanize }}"
+          description: "{{ $labels.service }} has served >15% errors for 2 minutes (an error_storm may have been injected, or the service is genuinely degraded)."
+
+      - alert: ServiceLatencyDegraded
+        expr: histogram_quantile(0.95, sum by (service) (rate(service_request_latency_ms_bucket[5m]))) > 400
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} p95 latency > 400ms"
+          description: "{{ $labels.service }} p95 latency is {{ $value | humanize }}ms. A latency_spike may have been injected, or the service is slow."
