@@ -25,7 +25,15 @@ import time
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-only-secret-change-me")
+# JWT signing key: resolved from HashiCorp Vault at import time (Phase 9).
+# Fail-closed - no hardcoded default; see vault_client.py.
+try:
+    from vault_client import get_jwt_secret
+
+    JWT_SECRET = get_jwt_secret()
+except Exception as exc:  # noqa: BLE001 - refuse to sign with an insecure key
+    raise RuntimeError(f"cannot resolve JWT_SECRET: {exc}") from exc
+
 TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", 21600))
 
 
@@ -65,7 +73,7 @@ def decode_token(token: str):
         return None
 
 
-def install_auth(app, public_paths=("/health", "/metrics", "/auth/login")):
+def install_auth(app, public_paths=("/health", "/metrics", "/auth/login", "/auth/oidc/login", "/auth/oidc/callback")):
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         if request.method == "OPTIONS":

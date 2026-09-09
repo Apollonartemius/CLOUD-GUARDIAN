@@ -40,10 +40,13 @@ from datetime import datetime, timedelta, timezone
 
 import auth
 import k8s_remediator
+import oidc
 import psycopg2
 import requests
+import tracing
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from logutil import get_logger, init_logging, log_error, log_info, log_warning
 from psycopg2.extras import RealDictCursor
 
@@ -66,8 +69,12 @@ FORECAST_BREACH_CONFIDENCE_THRESHOLD = float(
 )
 FORECAST_COOLDOWN_SECONDS = int(os.getenv("FORECAST_COOLDOWN_SECONDS", 300))
 AI_AGENT_URL = os.getenv("AI_AGENT_URL", "http://ai-reasoning-agent:8000")
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@cloudguardian.ai")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+if not ADMIN_EMAIL or not ADMIN_PASSWORD:
+    from vault_client import get_admin_credentials
+
+    ADMIN_EMAIL, ADMIN_PASSWORD = get_admin_credentials()
 SERVICE_TOKEN = auth.create_token(subject="decision-engine", role="service")
 
 # Alerting (Phase 7): generic Slack-compatible webhook. AWS SNS can be
@@ -246,7 +253,13 @@ def trigger_remediation(cur, conn, service: str, confidences: list, reason_suffi
     now = datetime.now(timezone.utc)
     correlation_id = str(uuid.uuid4())
 
-    success, message = restart_container(service)
+    with tracing.TraceContext("remediation") as span:
+        span.set_attribute("incident_type", "reactive")
+        span.set_attribute("service", service)
+        span.set_attribute("correlation_id", correlation_id)
+        span.set_attribute("action", "k8s_rollout_restart")
+        success, message = restart_container(service)
+
     action_taken = "k8s_rollout_restart" if success else "k8s_rollout_restart_failed"
     outcome = "pending" if success else "failed"
 
@@ -298,7 +311,14 @@ _last_predictive_action: dict = {}
 
 
 def trigger_preemptive_action(cur, conn, service: str, metric: str, risk: float, eta_minutes: float):
-    success, message = restart_container(service)
+    with tracing.TraceContext("preemptive_remediation") as span:
+        span.set_attribute("incident_type", "predictive")
+        span.set_attribute("service", service)
+        span.set_attribute("metric", metric)
+        span.set_attribute("breach_risk", str(round(risk, 3)))
+        span.set_attribute("eta_minutes", str(round(eta_minutes, 1)))
+        span.set_attribute("action", "k8s_proactive_rollout")
+        success, message = restart_container(service)
     action_taken = "k8s_proactive_rollout" if success else "k8s_proactive_rollout_failed"
     outcome = "pending" if success else "failed"
     reason = f"forecast breach risk {risk:.2f} for {metric} within ~{eta_minutes:.0f} min"
@@ -354,6 +374,14 @@ def verify_pending_incidents(cur, conn):
         post_restart_anomalies = recent_anomalies(cur, service, check_since)
 
         outcome = "escalated" if post_restart_anomalies else "resolved"
+        tracing.emit_trace(
+            "remediation_verification",
+            attrs={
+                "incident_id": incident_id,
+                "service": service,
+                "outcome": outcome,
+            },
+        )
         cur.execute(
             "UPDATE incidents SET outcome = %s, verified_at = %s WHERE id = %s",
             (outcome, now, incident_id),
@@ -468,6 +496,38 @@ def login(payload: dict):
         raise HTTPException(status_code=401, detail="invalid credentials")
     token = auth.create_token(subject=email, role="operator")
     return {"token": token, "token_type": "bearer", "expires_in": auth.TOKEN_TTL_SECONDS, "email": email}
+
+
+# --- OIDC SSO (Phase 9) -----------------------------------------------------
+# Operator SSO with an external IdP (Google by default). Not enabled until
+# OIDC_ENABLED=true and a client id/secret/redirect are configured in .env -
+# see monitoring/vault + README "Security hardening".
+_oidc = oidc.get_config()
+
+
+@app.get("/auth/oidc/login")
+def oidc_login():
+    if not _oidc.enabled:
+        raise HTTPException(status_code=404, detail="OIDC not enabled")
+    return {"authorization_url": _oidc.authorization_url()}
+
+
+@app.get("/auth/oidc/callback")
+def oidc_callback(code: str = Query(...), state: str = Query(...)):
+    if not _oidc.enabled:
+        raise HTTPException(status_code=404, detail="OIDC not enabled")
+    try:
+        claims = _oidc.exchange(code, state)
+    except Exception as exc:  # noqa: BLE001
+        log_warning(logger, "oidc_callback_failed", error=str(exc))
+        raise HTTPException(status_code=401, detail=f"OIDC exchange failed: {exc}") from exc
+    redirect_url = _oidc.build_redirect(claims)
+    return RedirectResponse(url=redirect_url)
+
+
+@app.get("/auth/oidc/config")
+def oidc_config():
+    return _oidc.readiness()
 
 
 @app.get("/incidents/current")

@@ -32,3 +32,6 @@ crash.log
 
 # Kubernetes cluster credentials (local k3d/k3s)
 .kube/
+
+# Vault-generated local secrets (never commit)
+monitoring/vault/vault-secrets.env

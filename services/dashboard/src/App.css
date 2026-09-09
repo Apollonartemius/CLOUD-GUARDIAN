@@ -1069,6 +1069,28 @@
 .login-btn:hover:not(:disabled) { opacity: 0.92; }
 .login-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
+.login-btn--oidc {
+  background: transparent;
+  color: var(--paper-100);
+  border: 1px solid var(--fog-400);
+}
+
+.login-card__divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 2px;
+  color: var(--fog-500);
+  font-size: 11px;
+}
+.login-card__divider::before,
+.login-card__divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--fog-400);
+}
+
 .login-card__hint {
   display: flex;
   align-items: center;

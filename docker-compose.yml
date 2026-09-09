@@ -13,6 +13,51 @@
 # here. See the main README for the full walkthrough.
 
 services:
+  # HashiCorp Vault (Phase 9): secret store for JWT signing key + operator
+  # credentials. Local dev-mode (auto-unsealed); production would use a real
+  # sealed/HA Vault with unseal keys in KMS.
+  vault:
+    image: hashicorp/vault:1.18.3
+    container_name: vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    volumes:
+      - ./monitoring/vault/vault-secrets.env:/vault-secrets.env
+    networks:
+      - cloudguardian
+    command:
+      - server
+      - -dev
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-S", "http://127.0.0.1:8200/v1/sys/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # One-shot seeder: generates a random JWT key + admin password ONCE,
+  # persists them locally, and stores them in Vault KV v2. Other services
+  # wait for it via depends_on: service_completed_successfully.
+  vault-seed:
+    image: hashicorp/vault:1.18.3
+    container_name: vault-seed
+    depends_on:
+      vault:
+        condition: service_healthy
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
+    volumes:
+      - ./monitoring/vault/seed.sh:/seed.sh:ro
+      - ./monitoring/vault/vault-secrets.env:/vault-secrets.env
+    entrypoint: ["/bin/sh", "/seed.sh"]
+    networks:
+      - cloudguardian
+
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
@@ -51,11 +96,15 @@ services:
       PROMETHEUS_URL: http://prometheus:9090
       DATABASE_URL: postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian
       POLL_INTERVAL_SECONDS: 15
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
     ports:
       - "8010:8000"
     networks:
       - cloudguardian
     depends_on:
+      vault-seed:
+        condition: service_completed_successfully
       prometheus:
         condition: service_started
       postgres:
@@ -71,11 +120,15 @@ services:
       ZSCORE_THRESHOLD: 3.0
       IF_RETRAIN_INTERVAL_SECONDS: 300
       IF_MIN_TRAINING_ROWS: 50
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
     ports:
       - "8020:8000"
     networks:
       - cloudguardian
     depends_on:
+      vault-seed:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       metrics-collector:
@@ -96,6 +149,15 @@ services:
       FORECAST_BREACH_CONFIDENCE_THRESHOLD: 0.8
       FORECAST_COOLDOWN_SECONDS: 300
       AI_AGENT_URL: http://ai-reasoning-agent:8000
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
+      # OIDC SSO (Phase 9) - set these in .env to enable operator SSO.
+      OIDC_ENABLED: ${OIDC_ENABLED:-false}
+      OIDC_PROVIDER: ${OIDC_PROVIDER:-google}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-http://localhost:8030/auth/oidc/callback}
+      OIDC_DASHBOARD_URL: ${OIDC_DASHBOARD_URL:-http://localhost:3001}
     ports:
       - "8030:8000"
     volumes:
@@ -108,6 +170,8 @@ services:
       - cloudguardian
       - k3d-cloudguardian
     depends_on:
+      vault-seed:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       anomaly-detector:
@@ -125,11 +189,15 @@ services:
       MEMORY_THRESHOLD_MB: 800
       LATENCY_THRESHOLD_MS: 400
       ERROR_RATE_THRESHOLD: 0.15
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
     ports:
       - "8040:8000"
     networks:
       - cloudguardian
     depends_on:
+      vault-seed:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       metrics-collector:
@@ -143,11 +211,15 @@ services:
       FORECAST_ENGINE_URL: http://forecast-engine:8000
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
     ports:
       - "8050:8000"
     networks:
       - cloudguardian
     depends_on:
+      vault-seed:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       forecast-engine:
@@ -181,6 +253,51 @@ services:
       - metrics-collector
       - anomaly-detector
       - decision-engine
+
+  # Loki (Phase 9): log aggregation backend. Promtail ships container logs
+  # here; Grafana visualizes/explores them.
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki/local-config.yaml:/etc/loki/local-config.yaml
+    networks:
+      - cloudguardian
+
+  # Promtail (Phase 9): discovers Docker containers, tails their JSON logs,
+  # and forwards them to Loki. k3d node containers are excluded to keep the
+  # log stream focused on the platform stack.
+  promtail:
+    image: grafana/promtail:3.4.2
+    container_name: promtail
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./monitoring/loki/promtail-config.yml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - cloudguardian
+    depends_on:
+      - loki
+
+  # Tempo (Phase 9): distributed tracing backend (OTLP). Services that want
+  # to emit traces send OTLP here; Grafana has a Tempo datasource for
+  # trace search / service graphs.
+  tempo:
+    image: grafana/tempo:2.7.1
+    container_name: tempo
+    command: -config.file=/etc/tempo/config.yml
+    ports:
+      - "3200:3200"
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+    volumes:
+      - ./monitoring/tempo/config.yml:/etc/tempo/config.yml
+    networks:
+      - cloudguardian
 
   localstack:
     image: localstack/localstack:4.4.0

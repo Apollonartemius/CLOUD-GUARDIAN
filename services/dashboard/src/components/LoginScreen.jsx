@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Lock, LogIn, ShieldCheck, Loader2 } from "lucide-react";
-import { login, setToken } from "../api";
+import { login, setToken, ENDPOINTS } from "../api";
 
 export default function LoginScreen({ onSuccess }) {
   const [email, setEmail] = useState("");
@@ -21,6 +21,31 @@ export default function LoginScreen({ onSuccess }) {
       setError("Login failed — check credentials or that the stack is running.");
     }
   }
+
+  async function handleOidc() {
+    setError("");
+    const res = await fetch(`${ENDPOINTS.decisionEngine}/auth/oidc/login`).catch(
+      () => null
+    );
+    if (res?.ok) {
+      const data = await res.json();
+      if (data.authorization_url) window.location.href = data.authorization_url;
+      else setError("OIDC not configured — see the README hardening section.");
+    } else {
+      setError("OIDC is not reachable — check that the decision-engine is up.");
+    }
+  }
+
+  // Read an oidc_token passed back by /auth/oidc/callback redirect.
+  useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oidcToken = params.get("oidc_token");
+    if (oidcToken) {
+      setToken(oidcToken);
+      window.history.replaceState({}, "", window.location.pathname);
+      onSuccess({ token: oidcToken });
+    }
+  });
 
   return (
     <div className="login-screen">
@@ -60,6 +85,13 @@ export default function LoginScreen({ onSuccess }) {
         <button type="submit" className="login-btn" disabled={busy}>
           {busy ? <Loader2 size={14} className="spin" /> : <LogIn size={14} />}
           Authenticate
+        </button>
+
+        <div className="login-card__divider"><span>or</span></div>
+
+        <button type="button" className="login-btn login-btn--oidc" onClick={handleOidc}>
+          <ShieldCheck size={14} />
+          Sign in with Google (OIDC)
         </button>
 
         <div className="login-card__hint">
