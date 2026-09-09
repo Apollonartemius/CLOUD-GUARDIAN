@@ -70,9 +70,20 @@ SERVICES = ["auth-service", "payment-service", "inventory-service"]
 METRICS = ["cpu_percent", "memory_mb", "latency_ms", "error_rate"]
 
 app = FastAPI(title="forecast-engine")
+# Only the dashboard (and a handful of dev origins) may call these APIs from
+# a browser. Override with CORS_ORIGINS="http://a,http://b" if you run the
+# dashboard from another host.
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:3001,http://127.0.0.1:3001"
+    ).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

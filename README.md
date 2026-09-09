@@ -174,7 +174,15 @@ k3d cluster create cloudguardian `
   --port 8002:30002@serverlb `
   --port 8003:30003@serverlb
 
-# 2. Deploy the fleet (Deployments + NodePort Services + HPAs):
+# 2. Build the local fleet image + shared Docker network (first time only):
+cd terraform/local-infra
+terraform apply
+cd ../..
+
+# 3. Ship the fleet image into the cluster nodes (k3d can't pull from your host):
+k3d image import cloudguardian-ai-simulated-service:latest -c cloudguardian
+
+# 4. Deploy the fleet (Deployments + NodePort Services + HPAs):
 kubectl apply -f k8s/
 ```
 
@@ -231,10 +239,10 @@ started them — useful for checking status or viewing logs in one place.
 | **Tempo traces (Phase 9)** | http://localhost:3200 |
 
 In **Prometheus** (http://localhost:9090) → **Status → Targets** — all
-seven targets (3 fleet services + forecast-engine + ai-reasoning-agent +
-Render + Prometheus itself) should show `UP`. This confirms Prometheus
-can reach the k3d-provisioned pods, which is the main thing that could
-break with this architecture.
+ten targets (3 fleet services + the 5 platform services + Render +
+Prometheus itself) should show `UP`. This confirms Prometheus can reach
+the k3d-provisioned pods, which is the main thing that could break with
+this architecture.
 
 ---
 

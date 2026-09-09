@@ -60,6 +60,9 @@ def decode_token(token: str):
     try:
         h, p, s = token.split(".")
         signing_input = (h + "." + p).encode()
+        header = json.loads(_b64d(h.encode()))
+        if header.get("alg") != "HS256":
+            return None
         expected = _b64(
             hmac.new(JWT_SECRET.encode(), signing_input, hashlib.sha256).digest()
         ).decode()
@@ -73,7 +76,10 @@ def decode_token(token: str):
         return None
 
 
-def install_auth(app, public_paths=("/health", "/metrics", "/auth/login", "/auth/oidc/login", "/auth/oidc/callback")):
+def install_auth(app, public_paths=("/health", "/metrics", "/auth/login", "/auth/oidc/login", "/auth/oidc/callback"), operator_only_paths=()):
+    """JWT middleware. `operator_only_paths` are prefixes that require the
+    `operator` role (e.g. manual remediation) so plain service tokens can't
+    trigger state-changing actions."""
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         if request.method == "OPTIONS":
@@ -86,6 +92,10 @@ def install_auth(app, public_paths=("/health", "/metrics", "/auth/login", "/auth
         payload = decode_token(token)
         if payload is None:
             return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+
+        if any(request.url.path.startswith(p) for p in operator_only_paths):
+            if payload.get("role") != "operator":
+                return JSONResponse(status_code=403, content={"detail": "operator role required"})
 
         request.state.user = payload
         return await call_next(request)

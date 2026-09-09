@@ -4,3 +4,4 @@ psycopg2-binary==2.9.9
 pandas==2.2.2
 scikit-learn==1.5.1
 numpy==1.26.4
+prometheus_client==0.20.0

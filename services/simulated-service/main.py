@@ -36,9 +36,20 @@ BASE_MEM = float(os.getenv("BASE_MEM", 300))
 BASE_LATENCY_MS = float(os.getenv("BASE_LATENCY_MS", 50))
 
 app = FastAPI(title=SERVICE_NAME)
+# Only the dashboard (and a handful of dev origins) may call these APIs from
+# a browser. Override with CORS_ORIGINS="http://a,http://b" if you run the
+# dashboard from another host.
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:3001,http://127.0.0.1:3001"
+    ).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # local dev tool - the dashboard calls this directly from the browser
+    allow_origins=CORS_ORIGINS,  # dashboard calls this directly from the browser
     allow_methods=["*"],
     allow_headers=["*"],
 )

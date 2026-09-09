@@ -10,7 +10,6 @@ the service.
 """
 
 import os
-import time
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter

@@ -374,12 +374,12 @@ Orchestrates **7 containers** on a shared `cloudguardian` bridge network:
 | `grafana` | 3000 | (image: `grafana/grafana`) |
 | `localstack` | 4566 | (image: `localstack/localstack`) |
 
-The monitored fleet (`auth-service`, `payment-service`, `inventory-service`) is **not** in compose anymore — Terraform owns it (next section), and compose joins Terraform's `cloudguardian-net` network as `external`. So startup is **always** `terraform apply` first, then `docker compose up --build`.
+The monitored fleet (`auth-service`, `payment-service`, `inventory-service`) is **not** in compose anymore — it runs as real Kubernetes Deployments on the local k3d cluster (`k8s/simulated-services.yaml`), NodePort services map to host ports 8001-8003, and compose joins Terraform's `cloudguardian-net` network as `external`. So startup is **always**: `terraform apply` (local-infra → network + local image) → `k3d image import` → `kubectl apply -f k8s/` → `docker compose up --build`.
 
 ### Prometheus ([prometheus.yml](file:///d:/CSE%20eng/LY-btech/MINOR%20PROJ-%20CC/cloudguardian-ai/monitoring/prometheus/prometheus.yml))
 
-- Scrape interval: **15 seconds**
-- Targets: the 3 monitored services, `metrics-collector:8000`, `anomaly-detector:8000`, `decision-engine:8000`, `forecast-engine:8000`, `ai-reasoning-agent:8000`, plus (optionally) the real Render deployment
+- Scrape interval: **5 seconds**
+- Targets: the 3 monitored services, `metrics-collector:8000`, `anomaly-detector:8000`, `decision-engine:8000`, `forecast-engine:8000`, `ai-reasoning-agent:8000`, the real Render cloud service, plus Prometheus itself
 - Path: `/metrics` on all targets
 
 ### Grafana
@@ -411,9 +411,11 @@ For **real GCP deployment**:
 
 ### 3. Local Infra ([terraform/local-infra/](file:///d:/CSE%20eng/LY-btech/MINOR%20PROJ-%20CC/cloudguardian-ai/terraform/local-infra))
 
-Uses the **Docker Terraform provider** to manage containers locally:
+Uses the **Docker Terraform provider** to manage local resources:
 - Creates the **`cloudguardian-net`** Docker network — this is what compose references as `external`, so **Terraform must run before compose**
-- Builds the `simulated-service` image and runs **3 containers** (`auth-service`, `payment-service`, `inventory-service`) mapped to ports 8001-8003
+- Builds the `cloudguardian-ai-simulated-service:latest` image that the k3d Kubernetes fleet consumes
+
+The 3 monitored services themselves run on the k3d cluster (not as Docker containers here), so they no longer collide with host ports 8001-8003.
 
 ---
 

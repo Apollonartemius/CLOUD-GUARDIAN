@@ -43,12 +43,13 @@ from datetime import datetime, timedelta, timezone
 import auth
 import k8s_remediator
 import oidc
+import prometheus_client
 import psycopg2
 import requests
 import tracing
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from logutil import get_logger, init_logging, log_error, log_info, log_warning
 from psycopg2.extras import RealDictCursor
 
@@ -88,13 +89,24 @@ ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "cloudguardian")
 SERVICES = ["auth-service", "payment-service", "inventory-service"]
 
 app = FastAPI(title="decision-engine")
+# Only the dashboard (and a handful of dev origins) may call these APIs from
+# a browser. Override with CORS_ORIGINS="http://a,http://b" if you run the
+# dashboard from another host.
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:3001,http://127.0.0.1:3001"
+    ).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-auth.install_auth(app)
+auth.install_auth(app, operator_only_paths=("/remediate",))
 
 
 def get_connection():
@@ -492,6 +504,13 @@ threading.Thread(target=_decision_loop, daemon=True).start()
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(
+        prometheus_client.generate_latest(), media_type=prometheus_client.CONTENT_TYPE_LATEST
+    )
 
 
 @app.post("/auth/login")

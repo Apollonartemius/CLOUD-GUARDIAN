@@ -1,17 +1,21 @@
-# CloudGuardian AI - Monitored Infrastructure (Phase 6)
-# ---------------------------------------------------------
-# This provisions the 3 "monitored" microservices (auth, payment,
-# inventory) as real infrastructure-as-code, instead of them being
-# manually defined in docker-compose.yml like in Phases 1-5.
+# CloudGuardian AI - Shared local infrastructure (Phase 6, revised Phase 7)
+# -------------------------------------------------------------------------
+# This workspace provides the shared glue the platform stack plugs into:
+#   * the external Docker network (`cloudguardian-net`) that docker-compose
+#     references as "external: true"
+#   * the local `cloudguardian-ai-simulated-service:latest` image used by
+#     the monitored fleet
 #
-# Why split this out from the rest of the stack: in a real
-# organization, the *platform* (Prometheus, Grafana, the anomaly
-# detector, the decision engine) is usually owned and provisioned
-# separately from the *workloads* it monitors. This mirrors that:
-# Terraform owns the fleet being watched, docker-compose still owns
-# the observability/self-healing platform, and they're connected by
-# a shared Docker network created here and referenced as "external"
-# in docker-compose.yml.
+# The 3 monitored services (auth, payment, inventory) themselves now run as
+# real Kubernetes Deployments on the local k3d cluster (see k8s/). They are
+# intentionally NOT defined here anymore - ports 8001-8003 belong to the
+# k3d NodePort mappings, so defining them as docker containers would collide.
+#
+# Startup order (see README Part 3/4):
+#   1  terraform apply          -> network + local image (this file)
+#   2  k3d image import         -> ship the image into the k3d nodes
+#   3  kubectl apply -f k8s/    -> the fleet (Deployments, Services, HPAs)
+#   4  docker compose up        -> the platform stack
 
 terraform {
   required_providers {
@@ -36,61 +40,12 @@ resource "docker_network" "cloudguardian" {
   name = var.network_name
 }
 
-# Built once from the same source used in earlier phases - Terraform
-# just becomes the thing that builds and manages it instead of
-# docker-compose.
+# Built from the same source used in earlier phases - Terraform becomes the
+# thing that builds/manages it instead of docker-compose.
 resource "docker_image" "simulated_service" {
   name = "cloudguardian-ai-simulated-service:latest"
   build {
     context = "${path.module}/../../services/simulated-service"
   }
   keep_locally = true
-}
-
-locals {
-  services = {
-    "auth-service" = {
-      base_cpu     = 15
-      base_mem     = 250
-      base_latency = 40
-      host_port    = 8001
-    }
-    "payment-service" = {
-      base_cpu     = 25
-      base_mem     = 400
-      base_latency = 80
-      host_port    = 8002
-    }
-    "inventory-service" = {
-      base_cpu     = 20
-      base_mem     = 300
-      base_latency = 60
-      host_port    = 8003
-    }
-  }
-}
-
-resource "docker_container" "service" {
-  for_each = local.services
-
-  name  = each.key
-  image = docker_image.simulated_service.image_id
-
-  env = [
-    "SERVICE_NAME=${each.key}",
-    "BASE_CPU=${each.value.base_cpu}",
-    "BASE_MEM=${each.value.base_mem}",
-    "BASE_LATENCY_MS=${each.value.base_latency}",
-  ]
-
-  ports {
-    internal = 8000
-    external = each.value.host_port
-  }
-
-  networks_advanced {
-    name = docker_network.cloudguardian.name
-  }
-
-  restart = "unless-stopped"
 }

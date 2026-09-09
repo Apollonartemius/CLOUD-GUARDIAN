@@ -15,9 +15,8 @@ Loaded from a mounted kubeconfig (see docker-compose volume mounts).
 
 import os
 
-import yaml
 from kubernetes import client, config
-from logutil import get_logger, log_error
+from logutil import get_logger
 
 logger = get_logger("k8s-adapter")
 
@@ -79,7 +78,6 @@ def get_pod_count(service_name: str) -> int:
         for p in pods.items:
             if p.status.phase in ("Running", "Pending"):
                 count += 1
-        log_error  # noqa: keep import used
         return count
-    except Exception as e:
+    except Exception:
         return -1

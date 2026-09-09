@@ -26,6 +26,18 @@ scrape_configs:
     static_configs:
       - targets: ["ai-reasoning-agent:8000"]
 
+  - job_name: "metrics-collector"
+    static_configs:
+      - targets: ["metrics-collector:8000"]
+
+  - job_name: "anomaly-detector"
+    static_configs:
+      - targets: ["anomaly-detector:8000"]
+
+  - job_name: "decision-engine"
+    static_configs:
+      - targets: ["decision-engine:8000"]
+
   - job_name: "cloud-service-render"
     scheme: https
     static_configs:

@@ -41,7 +41,6 @@ class SecretUnavailableError(RuntimeError):
 
 def _raw_vault_request(path: str) -> dict:
     """Raw Vault API call. Returns the JSON body or raises."""
-    import json
 
     req = urllib.request.Request(
         f"{VAULT_ADDR}/v1/{path}",

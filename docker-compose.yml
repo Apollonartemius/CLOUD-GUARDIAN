@@ -1,16 +1,20 @@
 # CloudGuardian AI - Platform Stack (Phase 6+)
 # ------------------------------------------------
-# As of Phase 6, the 3 monitored microservices (auth-service,
-# payment-service, inventory-service) are no longer defined here -
-# they're provisioned by Terraform in terraform/local-infra/, as real
-# infrastructure-as-code. This file now owns the observability and
-# self-healing PLATFORM: Prometheus, Grafana, Postgres, the
-# metrics-collector, anomaly-detector, decision-engine, dashboard, and
-# LocalStack (simulated AWS for the multi-cloud piece).
+# The 3 monitored microservices (auth-service, payment-service,
+# inventory-service) run as real Kubernetes Deployments on the local k3d
+# cluster (see k8s/simulated-services.yaml) and are NOT defined here.
+# terraform/local-infra/ only creates the shared Docker network and builds
+# the local simulated-service image that k3d imports.
 #
-# Run order: `terraform apply` in terraform/local-infra/ FIRST (creates
-# the shared network + the 3 services), THEN `docker compose up --build`
-# here. See the main README for the full walkthrough.
+# This file owns the observability and self-healing PLATFORM: Vault,
+# Prometheus, Grafana, Postgres, the metrics-collector, anomaly-detector,
+# decision-engine, forecast-engine, ai-reasoning-agent, dashboard, plus
+# Loki/Promtail/Tempo (logs + tracing) and LocalStack (simulated AWS).
+#
+# Run order: 1) `terraform apply` in terraform/local-infra/ (shared
+# network + image), 2) `k3d cluster create` + `kubectl apply -f k8s/`
+# (the monitored fleet), 3) `docker compose up --build` here. See the
+# main README for the full walkthrough.
 
 services:
   # HashiCorp Vault (Phase 9): secret store for JWT signing key + operator
@@ -59,7 +63,7 @@ services:
       - cloudguardian
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.13.2
     container_name: prometheus
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
@@ -227,7 +231,7 @@ services:
         condition: service_started
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.1.3
     container_name: grafana
     environment:
       GF_SECURITY_ADMIN_USER: admin
