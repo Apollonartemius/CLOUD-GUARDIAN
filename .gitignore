@@ -29,3 +29,6 @@ Thumbs.db
 *.tfstate.backup
 *.tfstate.*.backup
 crash.log
+
+# Kubernetes cluster credentials (local k3d/k3s)
+.kube/

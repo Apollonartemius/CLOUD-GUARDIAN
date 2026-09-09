@@ -1,0 +1,260 @@
+# CloudGuardian AI - Phase 7 (Kubernetes)
+# ---------------------------------------------------------------------------
+# The 3 monitored services now run as real Kubernetes Deployments (not plain
+# Docker containers). Each service:
+#   - runs with a base CPU/memory/latency profile (same env vars as before)
+#   - is wrapped in a NodePort Service (30001..30003) so Prometheus and the
+#     chaos endpoints keep working on the same host ports (8001..8003)
+#   - has a HorizontalPodAutoscaler (HPA) driven by CPU so Kubernetes can
+#     auto-scale replicas when a service is under pressure
+#   - exposes the /metrics endpoint at :8000 for prometheus scraping
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: default
+  labels:
+    app: auth-service
+    tier: monitored-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        tier: monitored-service
+    spec:
+      containers:
+        - name: simulated-service
+          image: cloudguardian-ai-simulated-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: SERVICE_NAME
+              value: "auth-service"
+            - name: BASE_CPU
+              value: "15"
+            - name: BASE_MEM
+              value: "250"
+            - name: BASE_LATENCY_MS
+              value: "40"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: default
+  labels:
+    app: payment-service
+    tier: monitored-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+        tier: monitored-service
+    spec:
+      containers:
+        - name: simulated-service
+          image: cloudguardian-ai-simulated-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: SERVICE_NAME
+              value: "payment-service"
+            - name: BASE_CPU
+              value: "25"
+            - name: BASE_MEM
+              value: "400"
+            - name: BASE_LATENCY_MS
+              value: "80"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+  namespace: default
+  labels:
+    app: inventory-service
+    tier: monitored-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-service
+  template:
+    metadata:
+      labels:
+        app: inventory-service
+        tier: monitored-service
+    spec:
+      containers:
+        - name: simulated-service
+          image: cloudguardian-ai-simulated-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: SERVICE_NAME
+              value: "inventory-service"
+            - name: BASE_CPU
+              value: "20"
+            - name: BASE_MEM
+              value: "300"
+            - name: BASE_LATENCY_MS
+              value: "60"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# NodePort services: expose each Deployment on the cluster's 30xxx range.
+# k3d maps host ports 8001/8002/8003 -> node ports 30001/30002/30003 so
+# Prometheus + the dashboard + chaos injection keep working unchanged.
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: default
+  labels:
+    app: auth-service
+spec:
+  type: NodePort
+  selector:
+    app: auth-service
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30001
+      protocol: TCP
+      name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: default
+  labels:
+    app: payment-service
+spec:
+  type: NodePort
+  selector:
+    app: payment-service
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30002
+      protocol: TCP
+      name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-service
+  namespace: default
+  labels:
+    app: inventory-service
+spec:
+  type: NodePort
+  selector:
+    app: inventory-service
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30003
+      protocol: TCP
+      name: http
+---
+# HorizontalPodAutoscalers - the "scale" half of industrial self-healing.
+# When a pod's CPU crosses its request threshold (here 50% of requested CPU),
+# Kubernetes automatically adds replicas. The decision-engine's chaos tests
+# drive this so you can watch a single payment pod scale out under load.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: payment-service-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: payment-service
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: auth-service-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: auth-service
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: inventory-service-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: inventory-service
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60

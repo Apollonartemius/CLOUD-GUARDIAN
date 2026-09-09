@@ -65,6 +65,15 @@ _state = {
 }
 _lock = threading.Lock()
 
+_burn_stop = threading.Event()
+_burn_stop.set()
+
+
+def _burn_cpu():
+    """Actually consume CPU cores so the kubelet/metrics-server/HPA see real load."""
+    while not _burn_stop.is_set():
+        _ = [i * i for i in range(5000)]
+
 
 def _simulate_loop():
     """Background thread that continuously updates fake metrics."""
@@ -82,6 +91,10 @@ def _simulate_loop():
                 ctype = _state["chaos_type"]
                 if ctype == "cpu_spike":
                     target_cpu = min(98, BASE_CPU * 4)
+                    if _burn_stop.is_set():
+                        _burn_stop.clear()
+                        for _ in range(2):
+                            threading.Thread(target=_burn_cpu, daemon=True).start()
                 elif ctype == "memory_leak":
                     rate = _state.get("leak_mb_per_tick", None)
                     _state["mem"] += rate if rate else random.uniform(5, 15)
@@ -90,8 +103,11 @@ def _simulate_loop():
                     target_latency = BASE_LATENCY_MS * 8
                 elif ctype == "error_storm":
                     error_rate = 0.35
+                else:
+                    _burn_stop.set()
             else:
                 _state["chaos_type"] = None
+                _burn_stop.set()
 
             _state["cpu"] += (target_cpu - _state["cpu"]) * 0.3 + random.uniform(-2, 2)
             _state["cpu"] = max(1, min(100, _state["cpu"]))

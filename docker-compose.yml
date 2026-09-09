@@ -20,6 +20,8 @@ services:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - cloudguardian
 
@@ -97,9 +99,14 @@ services:
     ports:
       - "8030:8000"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.kube/config:/etc/cloudguardian/kubeconfig:ro
+      - ./.kube/ca.crt:/etc/cloudguardian/ca.crt:ro
+      - ./.kube/token:/etc/cloudguardian/token:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - cloudguardian
+      - k3d-cloudguardian
     depends_on:
       postgres:
         condition: service_healthy
@@ -192,6 +199,9 @@ networks:
   cloudguardian:
     name: cloudguardian-net
     external: true # created by `terraform apply` in terraform/local-infra/ - run that first
+  k3d-cloudguardian:
+    name: k3d-cloudguardian
+    external: true # created by `k3d cluster create` - allows decision-engine to reach the cluster API
 
 volumes:
   grafana-data:

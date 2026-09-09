@@ -1,0 +1,59 @@
+# CloudGuardian AI - Decision-Engine Kubernetes RBAC (Phase 7)
+# ---------------------------------------------------------------------------
+# Least-privilege access for the self-healing loop. The decision-engine only
+# needs to: read pods (to inspect), read events, and PATCH deployments to
+# trigger a rollout restart. It does NOT get cluster-admin - a real platform
+# would give a remediation controller exactly this narrow scope.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: decision-engine
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: decision-engine-remediator
+  namespace: default
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/status"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: decision-engine-remediator
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: decision-engine
+    namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: decision-engine-remediator
+---
+# Long-lived token: k3s only auto-provisions short-lived tokens.
+# We create a stable secret the container can read.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: decision-engine-token
+  namespace: default
+  annotations:
+    kubernetes.io/service-account.name: decision-engine
+type: kubernetes.io/service-account-token

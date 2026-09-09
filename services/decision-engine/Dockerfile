@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY auth.py .
 COPY logutil.py .
+COPY k8s_remediator.py .
 
 COPY main.py .
 

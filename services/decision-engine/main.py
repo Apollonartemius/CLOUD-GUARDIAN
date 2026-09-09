@@ -1,26 +1,25 @@
 """
-CloudGuardian AI - Decision Engine & Remediation (Phase 4)
---------------------------------------------------------------
-Reads anomalies written by the anomaly-detector (Phase 3) from
-Postgres, decides whether they're serious enough to act on, and if so,
-restarts the offending container via the Docker Engine API. Crucially,
-it then VERIFIES the fix actually worked afterward and escalates
-instead of declaring victory blindly if it didn't.
+CloudGuardian AI - Decision Engine & Remediation (Phase 7)
+-------------------------------------------------------------
+Reads anomalies written by the anomaly-detector from Postgres, decides
+whether they're serious enough to act on, and if so triggers a REAL
+Kubernetes rollout restart of the offending Deployment via the cluster
+API. Crucially, it then VERIFIES the fix actually worked afterward and
+escalates instead of declaring victory blindly if it didn't.
 
-Why "restart the container" rather than a Kubernetes action: this
-phase runs on top of the Docker Compose stack from Phases 1-3, not a
-Kubernetes cluster yet (that comes in Phase 6). Restarting a container
-is a real, standard remediation action (the same technique tools like
-Watchtower use) - it isn't a simulation. When Kubernetes is introduced
-later, this same decision logic can point at "kubectl rollout restart"
-instead, without changing the trigger/verify logic at all.
+Why Kubernetes rather than docker.sock: the monitored services now run as
+pod(s) managed by Deployments on a k3d (k3s) cluster. `rollout restart`
+is the standard remediation action used by real platforms. The trigger /
+verify logic is unchanged from Phase 4 - only the execution backend
+swapped from the Docker Engine API to the Kubernetes API.
 
 Decision logic (per service, on every check):
   1. Look at anomalies detected in the last TRIGGER_WINDOW_SECONDS.
   2. If there are at least MIN_ANOMALY_COUNT of them with an average
      confidence >= CONFIDENCE_THRESHOLD, AND we haven't already acted
      on this service within COOLDOWN_SECONDS, trigger remediation.
-  3. Remediation = restart the container, log an incident as "pending".
+  3. Remediation = Kubernetes rollout restart of the Deployment, log an
+     incident as "pending".
   4. On a later pass, once VERIFICATION_DELAY_SECONDS has passed since
      the restart, check whether new anomalies still appear for that
      service. No new anomalies -> mark "resolved". Anomalies persist
@@ -40,7 +39,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import auth
-import docker
+import k8s_remediator
 import psycopg2
 import requests
 from fastapi import FastAPI, HTTPException, Query
@@ -92,8 +91,9 @@ def get_connection():
     return psycopg2.connect(DATABASE_URL)
 
 
-def get_docker_client():
-    return docker.from_env()
+def restart_container(service_name: str) -> tuple[bool, str]:
+    """Trigger a Kubernetes rollout restart of the service's Deployment."""
+    return k8s_remediator.rollout_restart_deployment(service_name)
 
 
 def init_db():
@@ -161,19 +161,6 @@ def last_incident(cur, service: str):
         (service,),
     )
     return cur.fetchone()
-
-
-def restart_container(service_name: str) -> tuple[bool, str]:
-    """Actually restart the Docker container. Returns (success, message)."""
-    try:
-        client = get_docker_client()
-        container = client.containers.get(service_name)
-        container.restart(timeout=10)
-        return True, f"restarted container '{service_name}'"
-    except docker.errors.NotFound:
-        return False, f"container '{service_name}' not found"
-    except Exception as e:
-        return False, f"restart failed: {e}"
 
 
 def notify_ai_agent(incident_id: int, service: str, incident_type: str, correlation_id: str):
@@ -260,7 +247,7 @@ def trigger_remediation(cur, conn, service: str, confidences: list, reason_suffi
     correlation_id = str(uuid.uuid4())
 
     success, message = restart_container(service)
-    action_taken = "docker_restart" if success else "docker_restart_failed"
+    action_taken = "k8s_rollout_restart" if success else "k8s_rollout_restart_failed"
     outcome = "pending" if success else "failed"
 
     cur.execute(
@@ -312,7 +299,7 @@ _last_predictive_action: dict = {}
 
 def trigger_preemptive_action(cur, conn, service: str, metric: str, risk: float, eta_minutes: float):
     success, message = restart_container(service)
-    action_taken = "proactive_restart" if success else "proactive_restart_failed"
+    action_taken = "k8s_proactive_rollout" if success else "k8s_proactive_rollout_failed"
     outcome = "pending" if success else "failed"
     reason = f"forecast breach risk {risk:.2f} for {metric} within ~{eta_minutes:.0f} min"
     now = datetime.now(timezone.utc)

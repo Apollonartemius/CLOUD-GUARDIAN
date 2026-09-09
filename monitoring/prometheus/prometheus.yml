@@ -3,17 +3,20 @@ global:
   evaluation_interval: 5s
 
 scrape_configs:
+  # Sophisticated: auth/payment/inventory are now Kubernetes (k3d) pods,
+  # exposed on the host via nodeports mapped to 8001/8002/8003. Prometheus
+  # scrapes through the host gateway.
   - job_name: "auth-service"
     static_configs:
-      - targets: ["auth-service:8000"]
+      - targets: ["host.docker.internal:8001"]
 
   - job_name: "payment-service"
     static_configs:
-      - targets: ["payment-service:8000"]
+      - targets: ["host.docker.internal:8002"]
 
   - job_name: "inventory-service"
     static_configs:
-      - targets: ["inventory-service:8000"]
+      - targets: ["host.docker.internal:8003"]
 
   - job_name: "forecast-engine"
     static_configs:
