@@ -96,7 +96,7 @@ export default function LoginScreen({ onSuccess }) {
 
         <div className="login-card__hint">
           <Lock size={11} />
-          Default: admin@cloudguardian.ai / admin123 (set ADMIN_EMAIL / ADMIN_PASSWORD in .env)
+          Credentials come from Vault (monitoring/vault/vault-secrets.env) - or use Google OIDC above
         </div>
       </form>
     </div>

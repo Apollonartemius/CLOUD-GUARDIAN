@@ -22,7 +22,9 @@ Decision logic (per service, on every check):
      incident as "pending".
   4. On a later pass, once VERIFICATION_DELAY_SECONDS has passed since
      the restart, check whether new anomalies still appear for that
-     service. No new anomalies -> mark "resolved". Anomalies persist
+     service. Only anomalies detected after a POST_RESTART_SETTLE_SECONDS
+     grace window (so the detector can see the pod return to baseline)
+     count. None -> mark "resolved". Anomalies persist
      -> mark "escalated" (a human needs to look at this).
 
 Exposes:
@@ -63,6 +65,7 @@ MIN_ANOMALY_COUNT = int(os.getenv("MIN_ANOMALY_COUNT", 2))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", 0.7))
 COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", 180))
 VERIFICATION_DELAY_SECONDS = int(os.getenv("VERIFICATION_DELAY_SECONDS", 40))
+POST_RESTART_SETTLE_SECONDS = int(os.getenv("POST_RESTART_SETTLE_SECONDS", 45))
 FORECAST_ENGINE_URL = os.getenv("FORECAST_ENGINE_URL", "http://forecast-engine:8000")
 FORECAST_BREACH_CONFIDENCE_THRESHOLD = float(
     os.getenv("FORECAST_BREACH_CONFIDENCE_THRESHOLD", 0.8)
@@ -369,8 +372,11 @@ def verify_pending_incidents(cur, conn):
         if (now - started_at).total_seconds() < VERIFICATION_DELAY_SECONDS:
             continue  # not enough time has passed to judge yet
 
-        # Check for anomalies AFTER a short post-restart boot buffer, up to now
-        check_since = started_at + timedelta(seconds=10)
+        # Only escalate if anomalies persist for a full detection settle
+        # window AFTER the restart (the detector needs one cadence to see
+        # the pod come back to baseline) - a one-shot spike that ended at
+        # the restart must not count against us.
+        check_since = started_at + timedelta(seconds=POST_RESTART_SETTLE_SECONDS)
         post_restart_anomalies = recent_anomalies(cur, service, check_since)
 
         outcome = "escalated" if post_restart_anomalies else "resolved"

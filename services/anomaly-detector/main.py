@@ -48,6 +48,7 @@ DATABASE_URL = os.getenv(
 CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", 15))
 ROLLING_WINDOW = int(os.getenv("ROLLING_WINDOW", 80))  # ~20 min at 15s polling
 ZSCORE_THRESHOLD = float(os.getenv("ZSCORE_THRESHOLD", 3.0))
+ISOLATION_FOREST_MIN_CONFIDENCE = float(os.getenv("ISOLATION_FOREST_MIN_CONFIDENCE", 0.35))
 IF_RETRAIN_INTERVAL_SECONDS = int(os.getenv("IF_RETRAIN_INTERVAL_SECONDS", 300))
 IF_MIN_TRAINING_ROWS = int(os.getenv("IF_MIN_TRAINING_ROWS", 50))
 
@@ -223,14 +224,28 @@ def _detection_loop():
                         )
                     if if_hit:
                         score, confidence = if_hit
-                        _record_anomaly(cur, service, "isolation_forest", None, score, confidence, now)
-                        log_info(
-                            logger,
-                            "isolation_forest_anomaly_detected",
-                            service=service,
-                            score=round(score, 2),
-                            confidence=round(confidence, 2),
-                        )
+                        # IsolationForest emits borderline points as anomalies
+                        # (contamination=0.05) with very low confidence. Store
+                        # only genuine detections so weak noise does not drag
+                        # the decision-engine's average confidence below its
+                        # trigger threshold.
+                        if confidence < ISOLATION_FOREST_MIN_CONFIDENCE:
+                            log_info(
+                                logger,
+                                "isolation_forest_anomaly_ignored_low_confidence",
+                                service=service,
+                                score=round(score, 2),
+                                confidence=round(confidence, 2),
+                            )
+                        else:
+                            _record_anomaly(cur, service, "isolation_forest", None, score, confidence, now)
+                            log_info(
+                                logger,
+                                "isolation_forest_anomaly_detected",
+                                service=service,
+                                score=round(score, 2),
+                                confidence=round(confidence, 2),
+                            )
                     conn.commit()
                     cur.close()
                     conn.close()
