@@ -551,7 +551,11 @@ The dashboard's **AI Copilot** panel wraps all of this.
   LoadBalancer Service) fronts the simulated fleet via a host-based
   Ingress (`auth|payment|inventory.cloudguardian.ai`, verified live;
   unmatched hosts 404). The platform services are one Ingress rule away
-  from the same path, and Traefik's 443 listener is bound for TLS.
+  from the same path.
+- **TLS at the edge** — Traefik terminates HTTPS on 443 with a wildcard
+  self-signed cert (Ingress `tls` + `cloudguardian-tls` Secret), and HTTP
+  auto-redirects (301) to HTTPS. Swap the Secret for real certs to go to
+  production.
 - **Postgres backups** — the `pg-backup` compose service takes a daily
   `pg_dump -Fc` (compressed) into the `cloudguardian-backups` volume and
   keeps 7 days. `scripts/db_restore.sh` lists / verifies / restores a
