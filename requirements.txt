@@ -1,0 +1,8 @@
+# Root aggregator so dependabot/github and any tooling see every service
+# dependency set in one place (services/*/requirements.txt are the owners).
+-r services/ai-reasoning-agent/requirements.txt
+-r services/anomaly-detector/requirements.txt
+-r services/decision-engine/requirements.txt
+-r services/forecast-engine/requirements.txt
+-r services/metrics-collector/requirements.txt
+-r services/simulated-service/requirements.txt

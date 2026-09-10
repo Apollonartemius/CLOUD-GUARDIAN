@@ -49,3 +49,23 @@ jobs:
             pip-audit -r "$req"
             echo "::endgroup::"
           done
+
+  trivy:
+    name: file/dependency vulnerability scan (trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan (services + k8s manifests)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: services/
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif

@@ -534,6 +534,13 @@ The dashboard's **AI Copilot** panel wraps all of this.
   every existing `conn.close()` return the connection to the pool instead
   of dropping it, and a `SELECT 1` probe transparently rebuilds the pool
   after a Postgres restart so callers never touch a stale connection.
+- **Fleet autoscaling hardening** — reproduced the HPA "blind window"
+  (single-pod fleet loses ALL CPU metrics for ~60-90s during a rollout,
+  so HPA can't scale). Fixed by `minReplicas: 2` + explicit HPA
+  `behavior` (fast scaleUp, `selectPolicy: Max`); CPU requests raised
+  50m → 100m (5:1 vs the 500m limit). Re-verified live: 2/2 replicas
+  throughout a rollout and a `cpu_spike` still scales payment to its
+  4-replica max.
 - **Postgres backups** — the `pg-backup` compose service takes a daily
   `pg_dump -Fc` (compressed) into the `cloudguardian-backups` volume and
   keeps 7 days. `scripts/db_restore.sh` lists / verifies / restores a

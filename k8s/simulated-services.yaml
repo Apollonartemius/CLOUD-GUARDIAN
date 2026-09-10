@@ -64,7 +64,7 @@ spec:
               value: "0.005"
           resources:
             requests:
-              cpu: 50m
+              cpu: 100m
               memory: 128Mi
             limits:
               cpu: 500m
@@ -125,7 +125,7 @@ spec:
               value: "0.01"
           resources:
             requests:
-              cpu: 50m
+              cpu: 100m
               memory: 128Mi
             limits:
               cpu: 500m
@@ -186,7 +186,7 @@ spec:
               value: "0.007"
           resources:
             requests:
-              cpu: 50m
+              cpu: 100m
               memory: 128Mi
             limits:
               cpu: 500m
@@ -269,7 +269,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: payment-service
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 4
   metrics:
     - type: Resource
@@ -278,6 +278,16 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -289,7 +299,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: auth-service
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 3
   metrics:
     - type: Resource
@@ -298,6 +308,16 @@ spec:
         target:
           type: Utilization
           averageUtilization: 60
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -309,7 +329,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: inventory-service
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 3
   metrics:
     - type: Resource
@@ -318,3 +338,13 @@ spec:
         target:
           type: Utilization
           averageUtilization: 60
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
