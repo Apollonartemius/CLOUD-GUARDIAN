@@ -515,10 +515,20 @@ The dashboard's **AI Copilot** panel wraps all of this.
   line (`ts`, `level`, `service`, `event`, plus fields), parseable by
   Loki/CloudWatch/Stackdriver, with a `correlation_id` tracing each
   incident across services.
-- **Alerting** — the decision-engine POSTs to a Slack-compatible
-  webhook when incidents trigger, escalate, or resolve. Point
-  `ALERT_WEBHOOK_URL` at a Slack incoming webhook to enable it; AWS SNS
-  can be swapped in behind the same `send_alert()` function.
+- **Alerting** — every incident trigger / escalate / resolve POSTs to a
+  Slack-compatible webhook (`ALERT_WEBHOOK_URL`); AWS SNS can be swapped
+  in behind the same `send_alert()` function.
+- **Alertmanager** (gap #10) — Prometheus alerting rules now deliver to
+  an Alertmanager service (`monitoring/alertmanager/alertmanager.yml`)
+  which routes every fire/resolve to `decision-engine /alert/hook`
+  (HTTP Basic auth, `ALERT_HOOK_SECRET`). The hook logs the alert and
+  forwards it through the same `send_alert()` webhook, so Prometheus
+  rule alerts reach a human too. Verify: `docker logs decision-engine |
+  grep alert_hook` after an alert fires, or POST a test alert to the AM
+  API at `http://localhost:9093/api/v2/alerts`.
+- **Grafana** — the provisioned overview dashboard now has an
+  **Alerting & Failure Injection** section (firing-alert count, active
+  alerts table, and error-rate / p95-latency vs their alert SLOs).
 
 ---
 
