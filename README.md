@@ -534,6 +534,14 @@ The dashboard's **AI Copilot** panel wraps all of this.
   every existing `conn.close()` return the connection to the pool instead
   of dropping it, and a `SELECT 1` probe transparently rebuilds the pool
   after a Postgres restart so callers never touch a stale connection.
+- **Postgres HA + point-in-time recovery** — the primary archives every WAL
+  segment to a shared volume while a streaming standby (`pg-replica`)
+  mirrors it continuously (verified 0 KB lag). `scripts/db_basebackup.sh`
+  takes full physical backups; `scripts/db_pitr_restore.sh` replays backup
+  + WAL to any instant in an isolated container. Drill verified live: it
+  recovered two incidents "lost" to an on-purpose deletion, stopping exactly
+  at the chosen timestamp. The logical dump+restore path (`pg-backup` +
+  `scripts/db_restore.sh`) remains for table-level restores.
 - **Versioned schema migrations (Alembic)** — `alembic/` holds the
   platform schema as a clean, reversible migration chain
   (`DATABASE_URL=... alembic upgrade head` / `alembic downgrade base`),
