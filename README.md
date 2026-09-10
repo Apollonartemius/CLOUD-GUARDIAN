@@ -534,6 +534,12 @@ The dashboard's **AI Copilot** panel wraps all of this.
   every existing `conn.close()` return the connection to the pool instead
   of dropping it, and a `SELECT 1` probe transparently rebuilds the pool
   after a Postgres restart so callers never touch a stale connection.
+- **Versioned schema migrations (Alembic)** — `alembic/` holds the
+  platform schema as a clean, reversible migration chain
+  (`DATABASE_URL=... alembic upgrade head` / `alembic downgrade base`),
+  proven byte-identical to the live DB. Services still auto-create their
+  tables idempotently at startup as a zero-downtime safety net, while
+  Alembic is the canonical, versioned record.
 - **Fleet autoscaling hardening** — reproduced the HPA "blind window"
   (single-pod fleet loses ALL CPU metrics for ~60-90s during a rollout,
   so HPA can't scale). Fixed by `minReplicas: 2` + explicit HPA
