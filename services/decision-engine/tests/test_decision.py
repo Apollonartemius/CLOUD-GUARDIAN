@@ -288,3 +288,20 @@ def test_alert_hook_auth_and_delivery(load, monkeypatch):
     assert result == {"received": 1}
     assert delivered and "ServiceErrorRateHigh" in str(delivered[0])
     assert delivered[0][0].lower() == "warning"
+
+
+def test_jwt_key_rotation(load, monkeypatch):
+    auth = load("decision-engine").auth
+    original_secret = auth.JWT_SECRET
+    token = auth.create_token("op@cloudguardian.ai", role="operator")
+    assert auth.decode_token(token)["sub"] == "op@cloudguardian.ai"
+
+    monkeypatch.setattr(auth, "JWT_SECRET", "new-signing-key-2")
+    monkeypatch.setenv("JWT_PREVIOUS_SECRETS", original_secret)
+    assert auth.decode_token(token) is not None
+    fresh = auth.create_token("op@cloudguardian.ai")
+    assert auth.decode_token(fresh) is not None
+
+    monkeypatch.setenv("JWT_PREVIOUS_SECRETS", "")
+    assert auth.decode_token(token) is None
+    assert auth.decode_token(fresh) is not None

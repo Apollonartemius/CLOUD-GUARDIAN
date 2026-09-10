@@ -36,6 +36,19 @@ except Exception as exc:  # noqa: BLE001 - refuse to sign with an insecure key
 
 TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", 21600))
 
+# Rotating-keys support (gap #7): the CURRENT key signs new tokens; any
+# PREVIOUS keys (comma-separated in JWT_PREVIOUS_SECRETS after a rotation)
+# are still accepted for verification so already-issued tokens survive a
+# key rollover. Rotation procedure:
+#   1. JWT_PREVIOUS_SECRETS=<old keys> (keep validating existing tokens)
+#   2. swap JWT_SECRET to the new key (new tokens get signed with it)
+#   3. drop the old key from JWT_PREVIOUS_SECRETS after all tokens expire
+def _verify_keys():
+    """Current signing key first, then any previous keys (post-rotation)."""
+    return [JWT_SECRET] + [
+        k for k in os.getenv("JWT_PREVIOUS_SECRETS", "").split(",") if k.strip()
+    ]
+
 
 def _b64(data: bytes) -> bytes:
     return base64.urlsafe_b64encode(data).rstrip(b"=")
@@ -63,13 +76,15 @@ def decode_token(token: str):
         header = json.loads(_b64d(h.encode()))
         if header.get("alg") != "HS256":
             return None
-        expected = _b64(
-            hmac.new(JWT_SECRET.encode(), signing_input, hashlib.sha256).digest()
-        ).decode()
-        if not hmac.compare_digest(expected, s):
-            return None
-        payload = json.loads(_b64d(p.encode()))
-        if payload.get("exp", 0) < time.time():
+        payload = None
+        for key in _verify_keys():
+            expected = _b64(
+                hmac.new(key.encode(), signing_input, hashlib.sha256).digest()
+            ).decode()
+            if hmac.compare_digest(expected, s):
+                payload = json.loads(_b64d(p.encode()))
+                break
+        if payload is None or payload.get("exp", 0) < time.time():
             return None
         return payload
     except Exception:

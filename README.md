@@ -518,6 +518,11 @@ The dashboard's **AI Copilot** panel wraps all of this.
 - **Alerting** — every incident trigger / escalate / resolve POSTs to a
   Slack-compatible webhook (`ALERT_WEBHOOK_URL`); AWS SNS can be swapped
   in behind the same `send_alert()` function.
+- **JWT key rotation** — `auth.py` (shared + copied into every service)
+  accepts tokens signed by the current `JWT_SECRET` *and* any
+  `JWT_PREVIOUS_SECRETS`, so rotating the signing key doesn't log
+  everyone out. Rotate via: new secrets into `JWT_PREVIOUS_SECRETS` →
+  swap `JWT_SECRET` → drop the old key after tokens expire.
 - **Alertmanager** (gap #10) — Prometheus alerting rules now deliver to
   an Alertmanager service (`monitoring/alertmanager/alertmanager.yml`)
   which routes every fire/resolve to `decision-engine /alert/hook`
