@@ -289,6 +289,52 @@ spec:
     scaleDown:
       stabilizationWindowSeconds: 300
 ---
+# Live load balancer / ingress: the k3s cluster's built-in Traefik controller
+# (a real LoadBalancer Service on ports 80/443) terminates HTTP and routes by
+# Host header to the simulated fleet's ClusterIPs. This is what the README's
+# "reach the whole fleet through one LB endpoint" story exercises:
+#   curl -H 'Host: auth.cloudguardian.ai' http://localhost:<80-LB-port>/health
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simulated-services-ingress
+  namespace: default
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+    - host: auth.cloudguardian.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8000
+    - host: payment.cloudguardian.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: 8000
+    - host: inventory.cloudguardian.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: inventory-service
+                port:
+                  number: 8000
+---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

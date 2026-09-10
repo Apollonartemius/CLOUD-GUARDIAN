@@ -547,6 +547,11 @@ The dashboard's **AI Copilot** panel wraps all of this.
   50m → 100m (5:1 vs the 500m limit). Re-verified live: 2/2 replicas
   throughout a rollout and a `cpu_spike` still scales payment to its
   4-replica max.
+- **Live LB / ingress** — the k3s cluster's Traefik controller (a real
+  LoadBalancer Service) fronts the simulated fleet via a host-based
+  Ingress (`auth|payment|inventory.cloudguardian.ai`, verified live;
+  unmatched hosts 404). The platform services are one Ingress rule away
+  from the same path, and Traefik's 443 listener is bound for TLS.
 - **Postgres backups** — the `pg-backup` compose service takes a daily
   `pg_dump -Fc` (compressed) into the `cloudguardian-backups` volume and
   keeps 7 days. `scripts/db_restore.sh` lists / verifies / restores a
