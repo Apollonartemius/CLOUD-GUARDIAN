@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY auth.py .
 COPY logutil.py .
 COPY vault_client.py .
+COPY api_versioning.py .
 
 COPY main.py .
 
