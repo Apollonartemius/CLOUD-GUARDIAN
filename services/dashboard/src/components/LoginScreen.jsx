@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Lock, LogIn, ShieldCheck, Loader2 } from "lucide-react";
-import { login, setToken, ENDPOINTS } from "../api";
+import { login, setToken, setRefreshToken, ENDPOINTS } from "../api";
 
 export default function LoginScreen({ onSuccess }) {
   const [email, setEmail] = useState("");
@@ -16,6 +16,7 @@ export default function LoginScreen({ onSuccess }) {
     setBusy(false);
     if (result?.token) {
       setToken(result.token);
+      setRefreshToken(result.refresh_token);
       onSuccess(result);
     } else {
       setError("Login failed — check credentials or that the stack is running.");
@@ -42,6 +43,7 @@ export default function LoginScreen({ onSuccess }) {
     const oidcToken = params.get("oidc_token");
     if (oidcToken) {
       setToken(oidcToken);
+      setRefreshToken(params.get("refresh_token"));
       window.history.replaceState({}, "", window.location.pathname);
       onSuccess({ token: oidcToken });
     }
@@ -91,12 +93,12 @@ export default function LoginScreen({ onSuccess }) {
 
         <button type="button" className="login-btn login-btn--oidc" onClick={handleOidc}>
           <ShieldCheck size={14} />
-          Sign in with Google (OIDC)
+          Continue with GitHub
         </button>
 
         <div className="login-card__hint">
           <Lock size={11} />
-          Credentials come from Vault (monitoring/vault/vault-secrets.env) - or use Google OIDC above
+          Credentials come from Vault (monitoring/vault/vault-secrets.env) - or use GitHub SSO above
         </div>
       </form>
     </div>

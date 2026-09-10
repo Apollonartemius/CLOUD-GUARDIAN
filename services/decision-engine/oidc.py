@@ -38,7 +38,21 @@ logger = logging.getLogger("oidc")
 
 DISCOVERY = {
     "google": "https://accounts.google.com/.well-known/openid-configuration",
-    "github": "https://token.actions.githubusercontent.com/.well-known/openid-configuration",
+}
+
+# Native OAuth 2.0 endpoints for GitHub OAuth Apps (GitHub does NOT expose
+# OpenID Connect discovery or id_tokens for OAuth apps - we exchange the code
+# for an access token, then read the identity via the /user API).
+GITHUB_ENDPOINTS = {
+    "issuer": "https://github.com",
+    "authorization_endpoint": "https://github.com/login/oauth/authorize",
+    "token_endpoint": "https://github.com/login/oauth/access_token",
+    "user_endpoint": "https://api.github.com/user",
+}
+
+SCOPES = {
+    "google": "openid email profile",
+    "github": "read:user user:email",
 }
 
 _state_lock = threading.Lock()
@@ -78,6 +92,9 @@ class OIDCConfig:
     def _discovered(self, key: str, default=None):
         if not self.enabled:
             return default
+        if self.provider == "github":
+            # static OAuth 2.0 endpoint map - no discovery involved
+            return GITHUB_ENDPOINTS.get(key, default)
         if self._discovery is None:
             self._discovery = self._load_discovery()
         return self._discovery.get(key, default)
@@ -108,7 +125,7 @@ class OIDCConfig:
         params = {
             "client_id": self.client_id,
             "response_type": "code",
-            "scope": "openid email profile",
+            "scope": SCOPES.get(self.provider, "openid email profile"),
             "redirect_uri": self.redirect_uri,
             "state": state,
             "nonce": nonce,
@@ -121,7 +138,11 @@ class OIDCConfig:
             record = _state_store.pop(state, {})
         if not record or record.get("expires_at", 0) < time.time():
             raise ValueError("oidc_state_invalid")
+        if self.provider == "github":
+            return self._exchange_github(code)
+        return self._exchange_oidc(code, record)
 
+    def _exchange_oidc(self, code: str, record: dict) -> dict:
         token_resp = requests.post(
             self._discovered("token_endpoint"),
             data={
@@ -140,8 +161,43 @@ class OIDCConfig:
         id_token = tokens.get("id_token")
         if not id_token:
             raise ValueError("oidc_no_id_token")
-        claims = self._verify_id_token(id_token, record["nonce"])
-        return claims
+        return self._verify_id_token(id_token, record["nonce"])
+
+    def _exchange_github(self, code: str) -> dict:
+        """GitHub OAuth 2.0: code -> access_token -> GET /user identity."""
+        token_resp = requests.post(
+            self._discovered("token_endpoint"),
+            data={
+                "code": code,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "redirect_uri": self.redirect_uri,
+            },
+            headers={"Accept": "application/json"},
+            timeout=10,
+        )
+        token_resp.raise_for_status()
+        access_token = token_resp.json().get("access_token")
+        if not access_token:
+            raise ValueError("oidc_no_access_token")
+
+        user_resp = requests.get(
+            self._discovered("user_endpoint"),
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=10,
+        )
+        user_resp.raise_for_status()
+        user = user_resp.json()
+        email = user.get("email") or f"{user.get('login', 'user')}@users.noreply.github.com"
+        return {
+            "sub": str(user.get("id", "")),
+            "email": email,
+            "login": user.get("login"),
+            "name": user.get("name"),
+        }
 
     def _verify_id_token(self, id_token: str, expected_nonce: str) -> dict:
         import base64
@@ -177,7 +233,10 @@ class OIDCConfig:
         if email and email.split("@")[-1] == self.provider + ".com":
             role = "operator"
         token = cg_auth.create_token(subject=email, role=role)
-        params = urllib.parse.urlencode({"oidc_token": token, "email": email})
+        refresh = cg_auth.create_refresh_token(subject=email, role=role)
+        params = urllib.parse.urlencode(
+            {"oidc_token": token, "refresh_token": refresh, "email": email}
+        )
         sep = "&" if "?" in self.dashboard_url else "?"
         return f"{self.dashboard_url}{sep}{params}"
 

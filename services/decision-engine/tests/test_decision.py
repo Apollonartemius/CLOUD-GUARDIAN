@@ -640,3 +640,107 @@ def test_rate_limit_middleware_tenancy_and_429(load):
         assert req.state.tenant == "gold"
 
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# OIDC SSO: native GitHub OAuth 2.0 path
+# ---------------------------------------------------------------------------
+
+class _FakeGitHubResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+def _github_config(de, monkeypatch):
+    import urllib.parse  # noqa: F401 (used by callers)
+
+    monkeypatch.setenv("OIDC_ENABLED", "true")
+    monkeypatch.setenv("OIDC_PROVIDER", "github")
+    monkeypatch.setenv("OIDC_CLIENT_ID", "Ov23-test")
+    monkeypatch.setenv("OIDC_CLIENT_SECRET", "sec-test")
+    monkeypatch.setenv("OIDC_REDIRECT_URI", "http://localhost:8030/auth/oidc/callback")
+    return de.oidc.OIDCConfig()
+
+
+def test_oidc_github_authorization_url(load, monkeypatch):
+    import urllib.parse
+
+    de = load("decision-engine")
+    cfg = _github_config(de, monkeypatch)
+
+    url = cfg.authorization_url()
+    assert url.startswith("https://github.com/login/oauth/authorize")
+    qs = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
+    assert qs["client_id"] == "Ov23-test"
+    assert "read:user" in qs["scope"]
+    assert "user:email" in qs["scope"]
+    assert "openid" not in qs["scope"]  # GitHub OAuth apps have no OIDC scopes
+    assert qs["redirect_uri"] == "http://localhost:8030/auth/oidc/callback"
+
+
+def test_oidc_github_exchange_returns_identity(load, monkeypatch):
+    de = load("decision-engine")
+    cfg = _github_config(de, monkeypatch)
+
+    import urllib.parse
+
+    state = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(cfg.authorization_url()).query))["state"]
+
+    calls = {}
+
+    class FakeRequests:
+        @staticmethod
+        def post(url, **kw):
+            calls["post"] = (url, kw)
+            return _FakeGitHubResp({"access_token": "gho_abc123"})
+
+        @staticmethod
+        def get(url, **kw):
+            calls["get"] = (url, kw)
+            return _FakeGitHubResp({"id": 4242, "login": "alice", "email": "alice@example.com"})
+
+    monkeypatch.setattr(de.oidc, "requests", FakeRequests)
+    claims = cfg.exchange(code="fake_code", state=state)
+
+    assert claims["sub"] == "4242"
+    assert claims["email"] == "alice@example.com"
+    assert calls["post"][0] == "https://github.com/login/oauth/access_token"
+    assert calls["post"][1]["data"]["client_secret"] == "sec-test"
+    assert calls["get"][0] == "https://api.github.com/user"
+    assert calls["get"][1]["headers"]["Authorization"] == "Bearer gho_abc123"
+
+
+def test_oidc_github_exchange_fallback_email(load, monkeypatch):
+    de = load("decision-engine")
+    cfg = _github_config(de, monkeypatch)
+
+    import urllib.parse
+
+    state = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(cfg.authorization_url()).query))["state"]
+
+    class FakeRequests:
+        @staticmethod
+        def post(url, **kw):
+            return _FakeGitHubResp({"access_token": "gho_x"})
+
+        @staticmethod
+        def get(url, **kw):
+            # GitHub hides private emails behind users.noreply.github.com
+            return _FakeGitHubResp({"id": 9, "login": "bob", "email": None})
+
+    monkeypatch.setattr(de.oidc, "requests", FakeRequests)
+    claims = cfg.exchange(code="c", state=state)
+    assert claims["email"] == "bob@users.noreply.github.com"
+
+
+def test_oidc_github_rejects_invalid_state(load, monkeypatch):
+    de = load("decision-engine")
+    cfg = _github_config(de, monkeypatch)
+    with pytest.raises(ValueError):
+        cfg.exchange(code="c", state="never-issued")

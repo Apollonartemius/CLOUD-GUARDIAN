@@ -15,6 +15,17 @@ echo "[1/2] Starting the 3 monitored services (Terraform)..."
 
 echo ""
 echo "[2/2] Starting the monitoring platform (docker-compose)..."
+
+# /tmp is RAM-backed and emptied on every reboot - restore the vault secrets
+# file from the repo copy if it's missing, or compose can't mount it.
+: "${VAULT_SECRETS_SOURCE:=/tmp/opencode/vault-secrets.env}"
+if [ ! -f "$VAULT_SECRETS_SOURCE" ]; then
+  echo "  -> restoring vault secrets file to $VAULT_SECRETS_SOURCE"
+  mkdir -p "$(dirname "$VAULT_SECRETS_SOURCE")"
+  cp monitoring/vault/vault-secrets.env "$VAULT_SECRETS_SOURCE"
+  chmod 600 "$VAULT_SECRETS_SOURCE"
+fi
+
 docker compose up -d --build
 
 echo ""
