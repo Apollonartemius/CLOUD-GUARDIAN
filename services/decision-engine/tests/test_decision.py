@@ -20,17 +20,144 @@ def test_trigger_preemptive_is_predictive(load, monkeypatch, fake_conn):
     de = load("decision-engine")
     monkeypatch.setattr(de, "restart_container", lambda s: (True, "restarted"))
     monkeypatch.setattr(de, "notify_ai_agent", lambda *a, **k: None)
+    monkeypatch.setattr(de, "send_alert", lambda *a, **k: None)
 
     cur = fake_conn.cursor()
+    risk = {
+        "service": "payment-service",
+        "metric": "latency_ms",
+        "breach_risk": 0.92,
+        "eta_minutes": 5.0,
+        "threshold": 400,
+        "peak_value": 640.0,
+    }
     incident_id, success, message = de.trigger_preemptive_action(
-        cur, fake_conn, "payment-service", "latency_ms", 0.92, 5.0
+        cur, fake_conn, "payment-service", risk
     )
 
     assert success is True
     assert incident_id == 42
-    predictive_insert = [p for sql, p in cur.executed if "incident_type" in sql][0]
-    assert "predictive" in predictive_insert
-    assert "proactive_restart" in predictive_insert
+    insert_sql, insert_params = [x for x in cur.executed if "incident_type" in x[0]][0]
+    assert "predictive" in insert_params
+    assert "k8s_proactive_rollout" in insert_params
+    assert "forecast_metric" in insert_sql
+    assert "640.0" in str(insert_params)  # predicted peak stored as forecast evidence
+
+
+def test_verify_predictive_prevented(load, monkeypatch):
+    de = load("decision-engine")
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    started = now - timedelta(minutes=10)
+    monkeypatch.setattr(de, "send_alert", lambda *a, **k: None)
+    # counterfactual: the forecast predicted a breach, but the measured peak
+    # stayed below the threshold -> verdict = prevented, breach did not occur
+    monkeypatch.setattr(de, "fetch_actual_peak", lambda cur, service, metric, since: (250.0, now))
+
+    class FakePendingCursor:
+        def __init__(self):
+            self.executed = []
+
+        def execute(self, sql, params=None):
+            self.executed.append((sql, params))
+            return self
+
+        def fetchall(self):
+            return [
+                (
+                    7,
+                    "payment-service",
+                    started,
+                    "predictive",
+                    "latency_ms",
+                    5.0,
+                    400,
+                    640.0,
+                )
+            ]
+
+        def fetchone(self):
+            return (None,)
+
+        def close(self):
+            pass
+
+    pending_cur = FakePendingCursor()
+    conn = type(
+        "C",
+        (),
+        {
+            "cursor": lambda s, cursor_factory=None: pending_cur,
+            "commit": lambda s: setattr(s, "committed", True),
+            "close": lambda s: None,
+        },
+    )()
+    monkeypatch.setattr(de, "get_connection", lambda: conn)
+    de.verify_pending_incidents(conn.cursor(), conn)
+
+    update_params = [p for sql, p in pending_cur.executed if "UPDATE" in sql][0]
+    assert "prevented" in update_params
+    assert "breach_prevented" in update_params
+    assert 250.0 in update_params
+
+
+def test_verify_predictive_breach_occurred(load, monkeypatch):
+    de = load("decision-engine")
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    started = now - timedelta(minutes=10)
+    monkeypatch.setattr(de, "send_alert", lambda *a, **k: None)
+    # counterfactual: the actual peak reached/exceeded the threshold -> the
+    # forecast was right and the pre-emptive action was insufficient
+    monkeypatch.setattr(de, "fetch_actual_peak", lambda cur, service, metric, since: (415.0, now))
+
+    class FakePendingCursor:
+        def __init__(self):
+            self.executed = []
+
+        def execute(self, sql, params=None):
+            self.executed.append((sql, params))
+            return self
+
+        def fetchall(self):
+            return [
+                (
+                    8,
+                    "payment-service",
+                    started,
+                    "predictive",
+                    "latency_ms",
+                    5.0,
+                    400,
+                    640.0,
+                )
+            ]
+
+        def fetchone(self):
+            return (None,)
+
+        def close(self):
+            pass
+
+    pending_cur = FakePendingCursor()
+    conn = type(
+        "C",
+        (),
+        {
+            "cursor": lambda s, cursor_factory=None: pending_cur,
+            "commit": lambda s: setattr(s, "committed", True),
+            "close": lambda s: None,
+        },
+    )()
+    monkeypatch.setattr(de, "get_connection", lambda: conn)
+    de.verify_pending_incidents(conn.cursor(), conn)
+
+    update_params = [p for sql, p in pending_cur.executed if "UPDATE" in sql][0]
+    assert "escalated" in update_params
+    assert "breach_not_prevented" in update_params
+    assert 415.0 in update_params
 
 
 def test_restart_failure_marks_failed(load, monkeypatch, fake_conn):
@@ -92,7 +219,8 @@ def test_verify_pending_resolved(load, monkeypatch):
             return self
 
         def fetchall(self):
-            return [(7, "auth-service", start)]
+            # id, service, started_at, type, forecast_metric, eta, threshold, peak
+            return [(7, "auth-service", start, "reactive", None, None, None, None)]
 
         def close(self):
             pass
@@ -101,6 +229,7 @@ def test_verify_pending_resolved(load, monkeypatch):
     conn = type("C", (), {"cursor": lambda s, cursor_factory=None: pending_cur,
                            "commit": lambda s: setattr(s, "committed", True),
                            "close": lambda s: None})()
+    monkeypatch.setattr(de, "send_alert", lambda *a, **k: None)
 
     monkeypatch.setattr(de, "get_connection", lambda: conn)
     de.verify_pending_incidents(conn.cursor(), conn)

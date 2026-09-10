@@ -1,0 +1,51 @@
+name: security-and-unit-tests
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: ruff + pytest (python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install runtime + test dependencies
+        run: |
+          pip install --upgrade pip
+          awk 'FNR==1 && NR>1 {print "\n"} {print}' services/*/requirements.txt > /tmp/cloudguardian-requirements.txt
+          pip install -r /tmp/cloudguardian-requirements.txt
+          pip install pytest ruff numpy pandas PyYAML python-dateutil
+      - name: Lint
+        run: ruff check services/ tests/
+      - name: Unit + integration tests
+        env:
+          JWT_SECRET: dummy-jwt-for-tests
+        run: pytest -q
+
+  pip-audit:
+    name: dependency vulnerability scan (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit each service dependency set
+        working-directory: services
+        run: |
+          for req in */requirements.txt; do
+            echo "::group::auditing $req"
+            pip-audit -r "$req"
+            echo "::endgroup::"
+          done

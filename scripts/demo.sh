@@ -195,7 +195,7 @@ show_hpa() {
 
 show_incidents() {
   local service="$1" attempts="${2:-18}" start_label="$3"
-  info "Incident lifecycle for $service (expect pending -> resolved ~$((45+15))s)..."
+  info "Incident lifecycle for $service (expect pending -> resolved/prevented)..."
   local previous=""
   for ((i=1; i<=attempts; i++)); do
     sleep 10
@@ -207,13 +207,16 @@ try:
     inc=[x for x in json.load(sys.stdin).get("incidents",[]) if x.get("service_name")=="'"$service"'"]
     newest=max(inc, key=lambda x: x.get("action_started_at") or "") if inc else None
     if newest:
-        print("#%s %s -> %s (%s)" % (newest["id"], newest["action_taken"], newest["outcome"], newest["incident_type"]))
+        verdict=newest.get("verdict") or ""
+        extra=(" verdict="+verdict) if verdict else ""
+        print("#%s %s -> %s (%s)%s" % (newest["id"], newest["action_taken"], newest["outcome"], newest["incident_type"], extra))
     else:
         print("no incidents yet")
 except Exception: print("no incidents yet")')"
     if [ "$line" != "$previous" ]; then printf '  %s\n' "$C_DIM$line$C_RESET"; previous="$line"; fi
     case "$line" in
       *"resolved"*)  ok "$start_label incident resolved - self-healing verified"; return 0 ;;
+      *"prevented"*) ok "$start_label incident PREVENTED - forecast was right, counterfactual proven"; return 0 ;;
       *"escalated"*) warn "incident escalated - needs human attention"; return 1 ;;
       *"failed"*)    warn "remediation action failed (see decision-engine logs)"; return 1 ;;
     esac
@@ -295,7 +298,7 @@ demo_predictive() {
     -H "Content-Type: application/json" >/dev/null 2>&1 || true
 
   info "Waiting for the forecast-engine to retrain and flag a breach risk..."
-  local risk="0"
+  local risk="0" eta="5"
   for ((i=1; i<=24; i++)); do
     sleep 10
     local resp
@@ -305,16 +308,62 @@ try:
     r=[x for x in json.load(sys.stdin).get("risks",[]) if x.get("service")=="'"$service"'"]
     print("%.2f" % max(x.get("breach_risk",0) for x in r) if r else "0")
 except Exception: print("0")')"
+    eta="$(printf '%s' "$resp" | python3 -c 'import json,sys
+try:
+    r=[x for x in json.load(sys.stdin).get("risks",[]) if x.get("service")=="'"$service"'"]
+    print("%.1f" % max(x.get("eta_minutes",5) for x in r) if r else "5")
+except Exception: print("5")')"
     printf '  %s\r' "$C_DIM breach_risk=$risk (threshold 0.80)${i}/24$C_RESET"
     if [ "$(python3 -c "print(int($risk >= 0.80))" 2>/dev/null)" = "1" ]; then
-      echo ""; ok "forecast crossed the threshold (risk=$risk) - predictive action should fire"
-      show_incidents "$service" 12 "PREDICTIVE"
-      return 0
+      echo ""; ok "forecast crossed the threshold (risk=$risk, eta=${eta}min) - predictive action should fire"
+      local attempts
+      attempts="$(python3 -c "import math; print(min(50, int(math.ceil($eta*6)) + 12))" 2>/dev/null)"
+      [ -z "$attempts" ] && attempts=42
+      show_incidents "$service" "$attempts" "PREDICTIVE ($(basename "$0"))"
+      return $?
     fi
   done
   echo ""
   warn "breach risk stayed below 0.80 within ~4min (forecast needs a few retrain cycles)"
   warn "check http://localhost:3001 Phase 7 panel, or run demo_predictive again"
+}
+
+# ====================================================================
+# demo_full: ONE command that proves the entire self-healing loop,
+# reactive AND predictive, and then prints the incident ledger so the
+# run can be pasted straight into the report.
+# ====================================================================
+demo_full() {
+  load_credentials
+  login || { err "login failed - check monitoring/vault/vault-secrets.env"; return 1; }
+
+  hr; info "FULL-CYCLE DEMO - reactive heal + predictive preemption + counterfactual proof"
+  hr
+
+  demo_reactive "${1:-90}" || warn "reactive leg did not complete cleanly"
+  echo ""
+  demo_predictive || warn "predictive leg did not complete cleanly"
+  echo ""
+
+  hr; info "INCIDENT LEDGER (report capture) - last 3 incidents per service"
+  hr
+  for s in auth-service payment-service inventory-service; do
+    printf '%s\n' "→ $s"
+    curl -sS -m5 "http://localhost:8030/incidents/history?service=$s" -H "Authorization: Bearer $token" 2>/dev/null \
+      | python3 -c 'import json,sys
+try:
+    inc=json.load(sys.stdin).get("incidents",[])[:3]
+    for i in inc:
+        v=i.get("verdict") or ""
+        s=i.get("verification_json")
+        peak=""
+        if s:
+            try: peak=" peak=%s/%s" % (round(s.get("actual_peak_value",0),1), s.get("threshold_value"))
+            except Exception: pass
+        print("  #%s %-8s -> %-10s %-10s %s%s" % (i["id"], i["incident_type"], i["outcome"], i["action_taken"][:14], v, peak))
+except Exception:
+    print("  (no incidents yet)")'
+  done
 }
 
 # ====================================================================
@@ -374,6 +423,7 @@ menu() {
     printf '  %s3)%s  PREDICTIVE demo - memory leak, forecast fires before the breach\n' "$C_CYAN" "$C_RESET"
     printf '  %s4)%s  Observability - Loki logs, Tempo traces, Grafana\n' "$C_CYAN" "$C_RESET"
     printf '  %s5)%s  Open dashboards (Grafana + Mission Control)\n' "$C_CYAN" "$C_RESET"
+    printf '  %s6)%s  FULL cycle - reactive + predictive + counterfactual verdict, with report ledger\n' "$C_CYAN" "$C_RESET"
     printf '  %s0)%s  Exit\n' "$C_YEL" "$C_RESET"
     hr
     read -r -p "choose: " choice || break
@@ -383,6 +433,7 @@ menu() {
       3) demo_predictive ;;
       4) observability ;;
       5) open_dashboards ;;
+      6) demo_full ;;
       0) break ;;
       *) warn "invalid choice" ;;
     esac
@@ -395,6 +446,7 @@ case "${1:-menu}" in
   --all|all)            load_credentials; login; health_check; echo ""; demo_reactive "${2:-120}"; observability ;;
   --reactive)           load_credentials; login; demo_reactive "${2:-120}" ;;
   --predictive)         load_credentials; login; demo_predictive ;;
+  --full|full)          load_credentials; login; demo_full "${2:-90}" ;;
   --observability)      observability ;;
   *)                    load_credentials; menu ;;
 esac

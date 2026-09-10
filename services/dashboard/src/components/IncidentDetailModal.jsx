@@ -12,6 +12,19 @@ function formatTime(iso) {
   });
 }
 
+function verificationPayload(incident) {
+  if (!incident?.verification_json) return null;
+  try {
+    const v =
+      typeof incident.verification_json === "string"
+        ? JSON.parse(incident.verification_json)
+        : incident.verification_json;
+    return v && typeof v === "object" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function IncidentDetailModal({ incident, onClose }) {
   const [report, setReport] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | loaded | missing | error
@@ -90,6 +103,29 @@ export default function IncidentDetailModal({ incident, onClose }) {
 
         {status === "loaded" && report && (
           <div className="modal-card__body">
+            {verificationPayload(incident) && (
+              <div className="rca-block rca-block--verification">
+                <div className="rca-block__label">COUNTERFACTUAL VERIFICATION</div>
+                <p className="rca-block__text">
+                  {incident.incident_type === "predictive" ? (
+                    <>
+                      The forecast predicted <strong>{incident.forecast_metric?.replace(/_/g, " ")}</strong>{" "}
+                      peaking at <strong>{verificationPayload(incident).predicted_peak_value}</strong>{" "}
+                      (threshold {verificationPayload(incident).threshold_value}) within ~
+                      {Number(incident.forecast_eta_minutes || 0).toFixed(1)} min. The system acted{" "}
+                      <em>before</em> that. The measured peak was{" "}
+                      <strong>{verificationPayload(incident).actual_peak_value}</strong> —{" "}
+                      {verificationPayload(incident).breach_occurred
+                        ? "the breach still occurred; the pre-emptive action was insufficient."
+                        : "below the threshold — the predicted breach did not happen. Pre-emption verified."}
+                    </>
+                  ) : (
+                    <>Reactive incidents are verified against post-action anomaly persistence.</>
+                  )}
+                </p>
+              </div>
+            )}
+
             <div className="rca-block">
               <div className="rca-block__label">ROOT-CAUSE HYPOTHESIS</div>
               <p className="rca-block__text">{report.root_cause}</p>

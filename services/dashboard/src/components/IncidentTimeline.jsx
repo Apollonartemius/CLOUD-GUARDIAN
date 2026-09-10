@@ -1,14 +1,36 @@
-import { ArrowRight, CheckCircle2, Clock, Sparkles, XCircle, Zap } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  ShieldCheck,
+  Sparkles,
+  XCircle,
+  Zap,
+} from "lucide-react";
 
 const OUTCOME_CONFIG = {
   pending: { label: "IN PROGRESS", icon: Clock, className: "outcome--pending" },
   resolved: { label: "RESOLVED", icon: CheckCircle2, className: "outcome--resolved" },
+  prevented: { label: "PREVENTED", icon: ShieldCheck, className: "outcome--prevented" },
   escalated: { label: "ESCALATED", icon: XCircle, className: "outcome--escalated" },
   failed: { label: "ACTION FAILED", icon: XCircle, className: "outcome--escalated" },
 };
 
 function formatServiceName(id) {
   return id.split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+}
+
+function parseVerification(incident) {
+  if (!incident.verification_json) return null;
+  try {
+    const v =
+      typeof incident.verification_json === "string"
+        ? JSON.parse(incident.verification_json)
+        : incident.verification_json;
+    return v && typeof v === "object" ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 function formatTime(iso) {
@@ -21,6 +43,7 @@ function IncidentCard({ incident, onSelect }) {
   const config = OUTCOME_CONFIG[incident.outcome] || OUTCOME_CONFIG.pending;
   const Icon = config.icon;
   const predictive = incident.incident_type === "predictive";
+  const verification = parseVerification(incident);
 
   return (
     <div className="incident-card" onClick={() => onSelect(incident)} role="button" tabIndex={0}>
@@ -64,6 +87,23 @@ function IncidentCard({ incident, onSelect }) {
             <div className="explain-flow__value">{config.label.toLowerCase()}</div>
           </div>
         </div>
+
+        {verification && (
+          <div className="counterfactual">
+            <ShieldCheck size={13} style={{ marginRight: 6, verticalAlign: -2 }} />
+            <span>
+              forecast said {incident.forecast_metric?.replace(/_/g, " ")} would peak at{" "}
+              {verification.predicted_peak_value} (threshold {verification.threshold_value})
+            </span>
+            <ArrowRight size={13} style={{ margin: "0 6px", verticalAlign: -2 }} />
+            <span>
+              actual peak {verification.actual_peak_value} →{" "}
+              <strong>
+                {verification.breach_occurred ? "breach occurred" : "breach avoided"}
+              </strong>
+            </span>
+          </div>
+        )}
 
         <div className="incident-card__meta">
           <span>confidence {incident.confidence_at_trigger?.toFixed(2)}</span>

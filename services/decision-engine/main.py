@@ -34,6 +34,7 @@ Exposes:
   POST /remediate/{service}   -> manually trigger remediation (useful for demos)
 """
 
+import json
 import os
 import threading
 import time
@@ -67,6 +68,9 @@ CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", 0.7))
 COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", 180))
 VERIFICATION_DELAY_SECONDS = int(os.getenv("VERIFICATION_DELAY_SECONDS", 40))
 POST_RESTART_SETTLE_SECONDS = int(os.getenv("POST_RESTART_SETTLE_SECONDS", 45))
+PREDICTIVE_VERIFY_BUFFER_SECONDS = int(
+    os.getenv("PREDICTIVE_VERIFY_BUFFER_SECONDS", 30)
+)
 FORECAST_ENGINE_URL = os.getenv("FORECAST_ENGINE_URL", "http://forecast-engine:8000")
 FORECAST_BREACH_CONFIDENCE_THRESHOLD = float(
     os.getenv("FORECAST_BREACH_CONFIDENCE_THRESHOLD", 0.8)
@@ -147,6 +151,48 @@ def init_db():
         """
         ALTER TABLE incidents
         ADD COLUMN IF NOT EXISTS correlation_id TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE incidents
+        ADD COLUMN IF NOT EXISTS forecast_metric TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE incidents
+        ADD COLUMN IF NOT EXISTS forecast_eta_minutes DOUBLE PRECISION;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE incidents
+        ADD COLUMN IF NOT EXISTS predicted_peak_value DOUBLE PRECISION;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE incidents
+        ADD COLUMN IF NOT EXISTS threshold_value DOUBLE PRECISION;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE incidents
+        ADD COLUMN IF NOT EXISTS actual_peak_value DOUBLE PRECISION;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE incidents
+        ADD COLUMN IF NOT EXISTS verdict TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE incidents
+        ADD COLUMN IF NOT EXISTS verification_json JSONB;
         """
     )
     cur.execute(
@@ -325,18 +371,34 @@ def check_forecast_breaches() -> list:
 _last_predictive_action: dict = {}
 
 
-def trigger_preemptive_action(cur, conn, service: str, metric: str, risk: float, eta_minutes: float):
+def trigger_preemptive_action(cur, conn, service: str, risk: dict):
+    """Act on a forecasted breach BEFORE it happens (predictive incident).
+
+    `risk` is one entry from the forecast-engine's /forecast/breach-risk:
+      {service, metric, breach_risk, eta_minutes, threshold, peak_value}
+    The forecast evidence (metric, predicted peak, threshold, eta) is stored
+    on the incident row so the counterfactual verifier can later answer:
+    "did the breach we predicted actually happen?"
+    """
+    metric = risk.get("metric", "unknown")
+    risk_score = float(risk.get("breach_risk", 0))
+    eta_minutes = float(risk.get("eta_minutes", 0))
+    threshold = risk.get("threshold")
+    predicted_peak = risk.get("peak_value")
     with tracing.TraceContext("preemptive_remediation") as span:
         span.set_attribute("incident_type", "predictive")
         span.set_attribute("service", service)
         span.set_attribute("metric", metric)
-        span.set_attribute("breach_risk", str(round(risk, 3)))
+        span.set_attribute("breach_risk", str(round(risk_score, 3)))
         span.set_attribute("eta_minutes", str(round(eta_minutes, 1)))
         span.set_attribute("action", "k8s_proactive_rollout")
         success, message = restart_container(service)
     action_taken = "k8s_proactive_rollout" if success else "k8s_proactive_rollout_failed"
     outcome = "pending" if success else "failed"
-    reason = f"forecast breach risk {risk:.2f} for {metric} within ~{eta_minutes:.0f} min"
+    reason = (
+        f"forecast breach risk {risk_score:.2f} for {metric} "
+        f"(predicted peak {predicted_peak} vs threshold {threshold}) within ~{eta_minutes:.0f} min"
+    )
     now = datetime.now(timezone.utc)
     correlation_id = str(uuid.uuid4())
 
@@ -344,11 +406,25 @@ def trigger_preemptive_action(cur, conn, service: str, metric: str, risk: float,
         """
         INSERT INTO incidents
             (service_name, trigger_reason, action_taken, confidence_at_trigger,
-             incident_type, correlation_id, action_started_at, outcome)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+             incident_type, correlation_id, action_started_at, outcome,
+             forecast_metric, forecast_eta_minutes, predicted_peak_value, threshold_value)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
-        (service, reason, action_taken, risk, "predictive", correlation_id, now, outcome),
+        (
+            service,
+            reason,
+            action_taken,
+            risk_score,
+            "predictive",
+            correlation_id,
+            now,
+            outcome,
+            metric,
+            eta_minutes,
+            predicted_peak,
+            threshold,
+        ),
     )
     incident_id = cur.fetchone()[0]
     conn.commit()
@@ -358,8 +434,10 @@ def trigger_preemptive_action(cur, conn, service: str, metric: str, risk: float,
         incident_id=incident_id,
         service=service,
         metric=metric,
-        breach_risk=round(risk, 3),
+        breach_risk=round(risk_score, 3),
         eta_minutes=round(eta_minutes, 1),
+        predicted_peak=predicted_peak,
+        threshold=threshold,
         correlation_id=correlation_id,
         action=action_taken,
         message=message,
@@ -369,10 +447,133 @@ def trigger_preemptive_action(cur, conn, service: str, metric: str, risk: float,
     return incident_id, success, message
 
 
+_METRIC_COLUMNS = {
+    "cpu_percent": "cpu_percent",
+    "memory_mb": "memory_mb",
+    "latency_ms": "latency_ms",
+    "error_rate": "error_rate",
+}
+
+
+def fetch_actual_peak(cur, service: str, metric: str, since: datetime):
+    """Highest real value of `metric` for `service` observed after `since`."""
+    column = _METRIC_COLUMNS.get(metric)
+    if column is None:
+        return None, None
+    cur.execute(
+        f"""
+        SELECT MAX({column}) AS peak, MAX(recorded_at) AS peak_at
+        FROM metric_readings
+        WHERE service_name = %s AND recorded_at >= %s
+        """,
+        (service, since),
+    )
+    row = cur.fetchone()
+    if row is None or row[0] is None:
+        return None, None
+    return float(row[0]), row[1]
+
+
+def verify_counterfactual(cur, conn, incident_id, service, started_at, metric, eta_minutes, threshold, predicted_peak):
+    """Prove whether the forecasted breach actually happened.
+
+    The pre-emptive action restarted the service before the predicted breach
+    time. We wait until the predicted breach window has passed, measure the
+    REAL peak the metric reached during that window, and then write the
+    verdict:
+      - actual peak stayed below the threshold -> outcome='prevented'
+        (the breach the forecast said was coming did not occur - that is the
+        counterfactual proof the action worked)
+      - actual peak reached/exceeded the threshold -> outcome='escalated'
+        (forecast missed, or the action did not contain it - a human looks)
+    """
+    now = datetime.now(timezone.utc)
+    eta_seconds = float(eta_minutes or 0) * 60
+    ready_at = started_at + timedelta(seconds=eta_seconds + PREDICTIVE_VERIFY_BUFFER_SECONDS)
+    if now < ready_at:
+        return  # predicted breach window has not elapsed yet
+
+    actual_peak, actual_peak_at = fetch_actual_peak(cur, service, metric, started_at)
+    actual_peak = actual_peak if actual_peak is not None else 0.0
+    breach = threshold is not None and actual_peak >= float(threshold)
+    outcome = "escalated" if breach else "prevented"
+    verdict = "breach_not_prevented" if breach else "breach_prevented"
+    verification_json = json.dumps(
+        {
+            "verdict": verdict,
+            "predicted_peak_value": predicted_peak,
+            "threshold_value": threshold,
+            "forecast_eta_minutes": eta_minutes,
+            "actual_peak_value": round(actual_peak, 4),
+            "actual_peak_at": actual_peak_at.isoformat() if actual_peak_at else None,
+            "breach_occurred": breach,
+            "verified_at": now.isoformat(),
+        },
+        default=str,
+    )
+    cur.execute(
+        """
+        UPDATE incidents
+        SET outcome = %s, verdict = %s, actual_peak_value = %s, verification_json = %s, verified_at = %s
+        WHERE id = %s
+        """,
+        (outcome, verdict, round(actual_peak, 4), verification_json, now, incident_id),
+    )
+    conn.commit()
+    tracing.emit_trace(
+        "counterfactual_verification",
+        attrs={
+            "incident_id": incident_id,
+            "service": service,
+            "metric": metric,
+            "outcome": outcome,
+            "predicted_peak": str(predicted_peak),
+            "actual_peak": str(round(actual_peak, 4)),
+            "threshold": str(threshold),
+        },
+    )
+    if breach:
+        log_warning(
+            logger,
+            "predictive_breach_occurred",
+            incident_id=incident_id,
+            service=service,
+            metric=metric,
+            predicted_peak=predicted_peak,
+            actual_peak=round(actual_peak, 4),
+        )
+        send_alert(
+            "critical",
+            f"PREDICTIVE Incident #{incident_id} ({service}): forecast said {metric} "
+            f"would peak at {predicted_peak} (threshold {threshold}) - it actually reached "
+            f"{round(actual_peak, 4)}. BREACH OCCURRED - needs human attention.",
+            None,
+        )
+    else:
+        log_info(
+            logger,
+            "predictive_breach_prevented",
+            incident_id=incident_id,
+            service=service,
+            metric=metric,
+            predicted_peak=predicted_peak,
+            actual_peak=round(actual_peak, 4),
+            threshold=threshold,
+        )
+        send_alert(
+            "info",
+            f"PREDICTIVE Incident #{incident_id} ({service}) VERIFIED PREVENTED: forecast said "
+            f"{metric} would hit {predicted_peak} (threshold {threshold}) - the actual peak "
+            f"stayed at {round(actual_peak, 4)}. The pre-emptive action worked.",
+            None,
+        )
+
+
 def verify_pending_incidents(cur, conn):
     cur.execute(
         """
-        SELECT id, service_name, action_started_at
+        SELECT id, service_name, action_started_at, incident_type, forecast_metric,
+               forecast_eta_minutes, threshold_value, predicted_peak_value
         FROM incidents
         WHERE outcome = 'pending'
         """
@@ -380,7 +581,33 @@ def verify_pending_incidents(cur, conn):
     pending = cur.fetchall()
     now = datetime.now(timezone.utc)
 
-    for incident_id, service, started_at in pending:
+    for (
+        incident_id,
+        service,
+        started_at,
+        incident_type,
+        forecast_metric,
+        eta_minutes,
+        threshold,
+        predicted_peak,
+    ) in pending:
+        # Counterfactual path: predictive incidents are judged against the
+        # forecast whose breach we were trying to avoid, not against
+        # arbitrary post-restart anomalies.
+        if incident_type == "predictive" and forecast_metric:
+            verify_counterfactual(
+                cur,
+                conn,
+                incident_id,
+                service,
+                started_at,
+                forecast_metric,
+                eta_minutes,
+                threshold,
+                predicted_peak,
+            )
+            continue
+
         if (now - started_at).total_seconds() < VERIFICATION_DELAY_SECONDS:
             continue  # not enough time has passed to judge yet
 
@@ -477,14 +704,7 @@ def _decision_loop():
                     ).total_seconds()
                     if seconds_since < COOLDOWN_SECONDS:
                         continue
-                trigger_preemptive_action(
-                    cur,
-                    conn,
-                    service,
-                    risk.get("metric", "unknown"),
-                    risk_score,
-                    float(risk.get("eta_minutes", 0)),
-                )
+                trigger_preemptive_action(cur, conn, service, risk)
                 _last_predictive_action[service] = now
 
             # 2. Verify any incidents whose grace period has elapsed
@@ -562,7 +782,10 @@ def current_incidents(minutes: int = Query(30, ge=1, le=1440)):
     cur.execute(
         """
         SELECT id, service_name, trigger_reason, action_taken, confidence_at_trigger,
-               incident_type, action_started_at, verified_at, outcome
+               incident_type, action_started_at, verified_at, outcome,
+               forecast_metric, forecast_eta_minutes, predicted_peak_value,
+               threshold_value, actual_peak_value, verdict,
+               verification_json::text AS verification_json
         FROM incidents
         WHERE action_started_at > now() - (%s || ' minutes')::interval
         ORDER BY action_started_at DESC
@@ -582,7 +805,10 @@ def incidents_history(service: str = Query(...), minutes: int = Query(120, ge=1,
     cur.execute(
         """
         SELECT id, trigger_reason, action_taken, confidence_at_trigger,
-               incident_type, action_started_at, verified_at, outcome
+               incident_type, action_started_at, verified_at, outcome,
+               forecast_metric, forecast_eta_minutes, predicted_peak_value,
+               threshold_value, actual_peak_value, verdict,
+               verification_json::text AS verification_json
         FROM incidents
         WHERE service_name = %s AND action_started_at > now() - (%s || ' minutes')::interval
         ORDER BY action_started_at ASC

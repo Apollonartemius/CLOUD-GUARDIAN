@@ -31,7 +31,7 @@ services:
     ports:
       - "8200:8200"
     volumes:
-      - ./monitoring/vault/vault-secrets.env:/vault-secrets.env
+      - ${VAULT_SECRETS_SOURCE:-./monitoring/vault/vault-secrets.env}:/vault-secrets.env
     networks:
       - cloudguardian
     command:
@@ -57,7 +57,7 @@ services:
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
     volumes:
       - ./monitoring/vault/seed.sh:/seed.sh:ro
-      - ./monitoring/vault/vault-secrets.env:/vault-secrets.env
+      - ${VAULT_SECRETS_SOURCE:-./monitoring/vault/vault-secrets.env}:/vault-secrets.env
     entrypoint: ["/bin/sh", "/seed.sh"]
     networks:
       - cloudguardian
@@ -100,7 +100,7 @@ services:
     environment:
       PROMETHEUS_URL: http://prometheus:9090
       DATABASE_URL: postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian
-      POLL_INTERVAL_SECONDS: 15
+      POLL_INTERVAL_SECONDS: 10
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
     ports:
@@ -144,7 +144,7 @@ services:
     container_name: decision-engine
     environment:
       DATABASE_URL: postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian
-      DECISION_CHECK_INTERVAL_SECONDS: 20
+      DECISION_CHECK_INTERVAL_SECONDS: 10
       TRIGGER_WINDOW_SECONDS: 45
       MIN_ANOMALY_COUNT: 2
       CONFIDENCE_THRESHOLD: 0.7
@@ -188,9 +188,11 @@ services:
     container_name: forecast-engine
     environment:
       DATABASE_URL: postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian
-      FORECAST_RETRAIN_INTERVAL_SECONDS: 300
+      FORECAST_RETRAIN_INTERVAL_SECONDS: 60
       FORECAST_WINDOW_MINUTES: 30
       FORECAST_HORIZON_MINUTES: 10
+      FORECAST_MIN_POINTS: 8
+      FORECAST_MAX_POINTS: 60
       CPU_THRESHOLD_PERCENT: 85
       MEMORY_THRESHOLD_MB: 800
       LATENCY_THRESHOLD_MS: 400

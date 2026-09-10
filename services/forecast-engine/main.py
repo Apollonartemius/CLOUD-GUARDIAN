@@ -172,8 +172,12 @@ def _linear_fallback(values: np.ndarray, horizon: int):
 def _fit_exponential_smoothing(values: np.ndarray):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
+        # damped_trend=False on purpose: we need the model to extrapolate a
+        # sustained climb so the system can act BEFORE a breach happens.
+        # Damping converges the forecast to a flat line, which hides exactly
+        # the kind of "about to breach" ramp the pre-emptive path exists for.
         model = ExponentialSmoothing(
-            values, trend="add", damped_trend=True, initialization_method="estimated"
+            values, trend="add", damped_trend=False, initialization_method="estimated"
         ).fit(optimized=True)
     fitted = np.asarray(model.fittedvalues)
     resid = values - fitted
@@ -218,7 +222,7 @@ def fit_forecast_model(service: str, metric: str):
         )
 
     threshold = DANGER_THRESHOLDS.get(metric)
-    risk, eta = breach_risk_from_points(points, threshold)
+    risk, eta, predicted_peak = breach_risk_from_points(points, threshold)
     return {
         "service": service,
         "metric": metric,
@@ -229,22 +233,23 @@ def fit_forecast_model(service: str, metric: str):
         "points": points,
         "breach_risk": risk,
         "breach_eta_minutes": eta,
+        "predicted_peak": predicted_peak,
         "training_points": len(values),
     }
 
 
 def breach_risk_from_points(points, threshold):
     if threshold is None:
-        return 0.0, None
+        return 0.0, None, None
     crosses = [p for p in points if p["value"] > threshold]
     if not crosses:
-        return 0.0, None
+        return 0.0, None, None
     first = crosses[0]
     eta = first["eta_minutes"]
     max_value = max(p["value"] for p in points)
     overshoot = (max_value - threshold) / max(threshold, 1e-6)
     risk = min(1.0, max(0.0, 0.5 + overshoot))
-    return round(risk, 4), eta
+    return round(risk, 4), eta, round(float(max_value), 4)
 
 
 _models: dict = {}
@@ -299,6 +304,7 @@ def _train_once():
                             "breach_risk": entry["breach_risk"],
                             "eta_minutes": entry["breach_eta_minutes"],
                             "threshold": entry["threshold"],
+                            "peak_value": entry["predicted_peak"],
                         }
                     )
             except Exception as e:

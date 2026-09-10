@@ -11,19 +11,26 @@ It exposes:
                        the configured latency is *actually slept* on every
                        request, and during an error_storm a fraction of
                        requests return HTTP 500)
-  GET  /health       -> health check (never slowed or failed on purpose, so
-                       k8s probes and load balancers can still see the pod)
+GET  /health       -> health check (never slowed or failed on purpose, so
+                        k8s probes and load balancers can still see the pod)
   GET  /metrics       -> Prometheus metrics (also exempt from injected delay)
   POST /chaos/{type}  -> inject a synthetic failure (for testing detection/self-healing)
   POST /chaos/stop     -> stop any active chaos
 
-Chaos types: cpu_spike, memory_leak, latency_spike, error_storm
+Chaos types (instant): cpu_spike, memory_leak, latency_spike, error_storm
+Chaos types (ramp):    ramp_latency (latency grows linearly, real per-request
+                       sleep grows with it), ramp_cpu (CPU gauge + real burn
+                       cores grow), ramp_memory (real heap grows). Ramp speed is
+                       controlled with ?ramp_per_tick= (units per 2s tick).
 
 Truthfulness of the fault model:
   - cpu_spike      real CPU burn threads  -> kubelet/metrics-server/HPA see real load
   - memory_leak    real heap allocations  -> container RSS actually grows
   - latency_spike  real time.sleep per / request -> callers actually feel it
   - error_storm    real HTTP 500 responses on / -> callers actually get errors
+  - ramp_latency   every / request genuinely sleeps more as the ramp climbs
+  - ramp_cpu       burn threads genuinely add load as the gauge climbs
+  - ramp_memory    real heap genuinely grows as the gauge climbs
 The /metrics gauges reflect those realities rather than a parallel fiction.
 """
 
@@ -88,6 +95,8 @@ _state = {
     "error_rate": BASE_ERROR_RATE,
     "chaos_until": 0.0,
     "chaos_type": None,
+    "ramp_accum": 0.0,
+    "ramp_per_tick": 0.0,
 }
 _lock = threading.Lock()
 
@@ -116,14 +125,36 @@ def _simulate_loop():
         with _lock:
             now = time.time()
             chaos_active = now < _state["chaos_until"]
+            ctype = _state["chaos_type"]
 
             target_cpu = BASE_CPU
             target_latency = BASE_LATENCY_MS
             error_rate = BASE_ERROR_RATE
 
             if chaos_active:
-                ctype = _state["chaos_type"]
-                if ctype == "cpu_spike":
+                if ctype == "ramp_latency":
+                    # Latency climbs every tick -> every / request really sleeps
+                    # more, so callers genuinely feel the degradation build up.
+                    _state["ramp_accum"] += _state.get("ramp_per_tick", 4.0)
+                    _state["latency"] = max(5, BASE_LATENCY_MS + _state["ramp_accum"])
+                elif ctype == "ramp_cpu":
+                    _state["ramp_accum"] += _state.get("ramp_per_tick", 2.0)
+                    target_cpu = min(98, BASE_CPU + _state["ramp_accum"])
+                    if target_cpu > 55:
+                        # back the gauge with real compute so kubelet/HPA feel it
+                        if _burn_stop.is_set():
+                            _burn_stop.clear()
+                            for _ in range(2):
+                                threading.Thread(target=_burn_cpu, daemon=True).start()
+                    else:
+                        _burn_stop.set()
+                elif ctype == "ramp_memory":
+                    _state["ramp_accum"] += _state.get("ramp_per_tick", 3.0)
+                    # top the real heap up to the ramped target so RSS truly grows
+                    target_bytes = int(_state["ramp_accum"] * 1024 * 1024)
+                    if len(_leak_buf) < target_bytes:
+                        _leak_buf.extend(bytes(target_bytes - len(_leak_buf)))
+                elif ctype == "cpu_spike":
                     target_cpu = min(98, BASE_CPU * 4)
                     if _burn_stop.is_set():
                         _burn_stop.clear()
@@ -140,10 +171,18 @@ def _simulate_loop():
                     _burn_stop.set()
             else:
                 _state["chaos_type"] = None
+                _state["ramp_accum"] = 0.0
+                _state["ramp_per_tick"] = 0.0
                 _burn_stop.set()
 
-            _state["cpu"] += (target_cpu - _state["cpu"]) * 0.3 + random.uniform(-2, 2)
-            _state["cpu"] = max(1, min(100, _state["cpu"]))
+            # Smooth the non-ramped metrics toward their targets (ramp metrics
+            # are driven directly so the trend stays a real, monotonic climb).
+            if not (chaos_active and ctype == "ramp_cpu"):
+                _state["cpu"] += (target_cpu - _state["cpu"]) * 0.3 + random.uniform(-2, 2)
+                _state["cpu"] = max(1, min(100, _state["cpu"]))
+            if not (chaos_active and ctype == "ramp_latency"):
+                _state["latency"] += (target_latency - _state["latency"]) * 0.3 + random.uniform(-3, 3)
+                _state["latency"] = max(5, _state["latency"])
 
             leaked_mb = len(_leak_buf) / (1024 * 1024)
             if leaked_mb > 0:
@@ -152,8 +191,6 @@ def _simulate_loop():
                 _state["mem"] += (BASE_MEM - _state["mem"]) * 0.2 + random.uniform(-3, 3)
                 _state["mem"] = max(50, _state["mem"])
 
-            _state["latency"] += (target_latency - _state["latency"]) * 0.3 + random.uniform(-3, 3)
-            _state["latency"] = max(5, _state["latency"])
             _state["error_rate"] = error_rate
 
             cpu_gauge.labels(service=SERVICE_NAME).set(_state["cpu"])
@@ -212,19 +249,33 @@ def trigger_chaos(
     chaos_type: str,
     duration_seconds: int = 60,
     leak_mb_per_tick: float = 0,
+    ramp_per_tick: float = 0,
 ):
-    valid_types = {"cpu_spike", "memory_leak", "latency_spike", "error_storm"}
+    valid_types = {
+        "cpu_spike",
+        "memory_leak",
+        "latency_spike",
+        "error_storm",
+        "ramp_latency",
+        "ramp_cpu",
+        "ramp_memory",
+    }
     if chaos_type not in valid_types:
         return {"error": f"invalid chaos_type, choose from {sorted(valid_types)}"}
+    if ramp_per_tick == 0 and chaos_type in ("ramp_latency", "ramp_cpu", "ramp_memory"):
+        defaults = {"ramp_latency": 4.0, "ramp_cpu": 2.0, "ramp_memory": 3.0}
+        ramp_per_tick = defaults[chaos_type]
     with _lock:
         _state["chaos_type"] = chaos_type
         _state["chaos_until"] = time.time() + duration_seconds
         _state["leak_mb_per_tick"] = leak_mb_per_tick or 0
+        _state["ramp_per_tick"] = ramp_per_tick
     return {
         "service": SERVICE_NAME,
         "chaos_injected": chaos_type,
         "duration_seconds": duration_seconds,
         "leak_mb_per_tick": leak_mb_per_tick or 0,
+        "ramp_per_tick": ramp_per_tick,
     }
 
 
@@ -234,5 +285,7 @@ def stop_chaos():
         _state["chaos_type"] = None
         _state["chaos_until"] = 0.0
         _state["leak_mb_per_tick"] = 0
+        _state["ramp_accum"] = 0.0
+        _state["ramp_per_tick"] = 0.0
         _leak_buf.clear()
     return {"service": SERVICE_NAME, "chaos_stopped": True}

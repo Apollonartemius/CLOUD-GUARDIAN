@@ -81,7 +81,8 @@ def test_chaos_to_resolve_pipeline(load, monkeypatch, fake_conn):
 
                 def fetchall(self):
                     started = datetime.now(timezone.utc) - timedelta(minutes=5)
-                    return [(incident_id, "payment-service", started)]
+                    # id, service, started_at, type, forecast_metric, eta, threshold, peak
+                    return [(incident_id, "payment-service", started, "reactive", None, None, None, None)]
 
                 def close(self):
                     pass

@@ -9,16 +9,17 @@ def test_breach_risk_crossing(load):
          "lower": 60, "upper": 80 + i * 3}
         for i in range(20)
     ]
-    risk, eta = fe.breach_risk_from_points(pts, 85)
+    risk, eta, peak = fe.breach_risk_from_points(pts, 85)
     assert risk > 0
     assert eta is not None
     assert 0.0 <= risk <= 1.0
+    assert peak is not None
 
 
 def test_breach_risk_no_crossing(load):
     fe = load("forecast-engine")
     pts = [{"step": 1, "eta_minutes": 1.0, "value": 50, "lower": 40, "upper": 60}]
-    assert fe.breach_risk_from_points(pts, 85) == (0.0, None)
+    assert fe.breach_risk_from_points(pts, 85) == (0.0, None, None)
 
 
 def test_linear_fallback_shapes(load):

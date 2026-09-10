@@ -111,7 +111,10 @@ def load_incident(incident_id: int):
     cur.execute(
         """
         SELECT id, service_name, trigger_reason, action_taken, confidence_at_trigger,
-               incident_type, action_started_at, verified_at, outcome
+               incident_type, action_started_at, verified_at, outcome,
+               forecast_metric, forecast_eta_minutes, predicted_peak_value,
+               threshold_value, actual_peak_value, verdict,
+               verification_json
         FROM incidents WHERE id = %s
         """,
         (incident_id,),
@@ -239,6 +242,19 @@ INCIDENT:
 - action taken: {incident['action_taken']}
 - confidence at trigger: {incident['confidence_at_trigger']}
 - current outcome: {incident['outcome']}
+- verdict: {incident.get('verdict')}
+- forecast metric: {incident.get('forecast_metric')}
+- forecast eta (min): {incident.get('forecast_eta_minutes')}
+- predicted peak (forecast): {incident.get('predicted_peak_value')}
+- threshold: {incident.get('threshold_value')}
+- actual peak (measured): {incident.get('actual_peak_value')}
+
+If this is a predictive incident whose verdict is 'breach_prevented', make
+the root cause clearly state: the forecast predicted a metric breach; we
+acted BEFORE it happened; and the measured peak stayed below the threshold,
+so the incident was prevented and that outcome is verifiable. If the verdict
+is 'breach_not_prevented', state honestly that the breach still occurred and
+the pre-emptive action was insufficient.
 
 METRIC TIMELINE ({ctx['metric_timeline_count']} readings over the window):
 {ctx['metric_timeline_summary']}
@@ -306,17 +322,45 @@ def generate_fallback_report(ctx):
     )
     if not hit_desc:
         hit_desc = f"triggered by {incident['trigger_reason']}"
+
+    verdict_note = ""
+    if incident.get("incident_type") == "predictive" and incident.get("verdict"):
+        if incident["verdict"] == "breach_prevented":
+            verdict_note = (
+                f" COUNTERFACTUAL VERIFICATION: the forecast predicted {incident.get('forecast_metric')} "
+                f"peaking at {incident.get('predicted_peak_value')} against a threshold of "
+                f"{incident.get('threshold_value')}; the measured peak was "
+                f"{incident.get('actual_peak_value')} - below the threshold, so the pre-emptive action "
+                f"prevented the predicted breach and that outcome is verified."
+            )
+        elif incident["verdict"] == "breach_not_prevented":
+            verdict_note = (
+                f" COUNTERFACTUAL VERIFICATION: the forecast predicted {incident.get('forecast_metric')} "
+                f"peaking at {incident.get('predicted_peak_value')}; the measured peak reached "
+                f"{incident.get('actual_peak_value')} and the breach still occurred - "
+                f"the pre-emptive action was insufficient."
+            )
+
     root_cause = (
         f"{incident['service_name']} degraded at {incident['action_started_at']}. "
         f"{ctx['metric_timeline_summary']}. {hit_desc}. "
         f"The decision engine took {incident['action_taken']} (confidence "
         f"{incident['confidence_at_trigger']:.2f}); outcome is currently "
-        f"{incident['outcome']}."
+        f"{incident['outcome']}.{verdict_note}"
     )
-    summary = (
-        f"{incident['service_name']} experienced a {incident['incident_type']} incident; "
-        f"{incident['action_taken'].replace('_', ' ')} executed, status {incident['outcome']}."
-    )
+    if incident.get("incident_type") == "predictive":
+        summary = (
+            f"{incident['service_name']} predicted-breach prevented: "
+            f"{incident['action_taken'].replace('_', ' ')} executed "
+            f"({incident.get('forecast_metric', 'metric')} was forecast to exceed "
+            f"{incident.get('threshold_value')} within ~{float(incident.get('forecast_eta_minutes') or 0):.0f} min); "
+            f"output {incident['outcome']}."
+        )
+    else:
+        summary = (
+            f"{incident['service_name']} experienced a {incident['incident_type']} incident; "
+            f"{incident['action_taken'].replace('_', ' ')} executed, status {incident['outcome']}."
+        )
     return {
         "root_cause": root_cause,
         "summary": summary,
