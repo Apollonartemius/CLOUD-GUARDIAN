@@ -1,3 +1,8 @@
+import base64
+
+import pytest
+
+
 def test_trigger_remediation_is_reactive(load, monkeypatch, fake_conn):
     de = load("decision-engine")
     monkeypatch.setattr(de, "restart_container", lambda s: (True, "restarted"))
@@ -234,3 +239,52 @@ def test_verify_pending_resolved(load, monkeypatch):
     monkeypatch.setattr(de, "get_connection", lambda: conn)
     de.verify_pending_incidents(conn.cursor(), conn)
     assert any("'resolved'" in str(p) for sql, p in pending_cur.executed if "UPDATE" in sql)
+
+
+def test_alert_hook_auth_and_delivery(load, monkeypatch):
+    de = load("decision-engine")
+    delivered = []
+    monkeypatch.setattr(de, "send_alert", lambda *a, **k: delivered.append(a))
+
+    class FakeReq:
+        def __init__(self, headers):
+            self.headers = headers
+
+    payload = {
+        "status": "firing",
+        "alerts": [
+            {
+                "status": "firing",
+                "labels": {
+                    "alertname": "ServiceErrorRateHigh",
+                    "severity": "warning",
+                    "service": "payment-service",
+                },
+                "annotations": {
+                    "summary": "payment error rate 0.20",
+                    "description": "payment-service has served >15% errors",
+                },
+            }
+        ],
+    }
+
+    # No credentials -> rejected
+    with pytest.raises(Exception):
+        de.alertmanager_hook(FakeReq({}), payload)
+
+    # Wrong password -> rejected
+    bad = FakeReq({"Authorization": "Basic " + base64.b64encode(b"cloudguardian:wrong").decode()})
+    with pytest.raises(Exception):
+        de.alertmanager_hook(bad, payload)
+
+    # Correct shared secret -> delivered once, logged as a warning alert
+    good = FakeReq(
+        {
+            "Authorization": "Basic "
+            + base64.b64encode(f"cloudguardian:{de.ALERT_HOOK_SECRET}".encode()).decode()
+        }
+    )
+    result = de.alertmanager_hook(good, payload)
+    assert result == {"received": 1}
+    assert delivered and "ServiceErrorRateHigh" in str(delivered[0])
+    assert delivered[0][0].lower() == "warning"

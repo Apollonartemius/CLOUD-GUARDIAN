@@ -1,0 +1,28 @@
+# CloudGuardian AI - Alertmanager (Phase 7 / gap #10)
+# ---------------------------------------------------------------
+# Prometheus alerting rules (monitoring/prometheus/rules.yml) now have a
+# receiver: every firing/resolved alert is forwarded to the
+# decision-engine /alert/hook over the internal docker network. That hook
+# logs the alert and pushes it outward through the same Slack-compatible
+# webhook (ALERT_WEBHOOK_URL) that incident alerts use, so the system can
+# actually get to a human - email, Slack, or any webhook.
+#
+# The basic_auth password MUST match ALERT_HOOK_SECRET on the
+# decision-engine service (default "cloudguardian-hook").
+# ---------------------------------------------------------------
+route:
+  receiver: cloudguardian-hook
+  group_by: ["alertname", "severity"]
+  group_wait: 5s
+  group_interval: 30s
+  repeat_interval: 4h
+
+receivers:
+  - name: cloudguardian-hook
+    webhook_configs:
+      - url: http://decision-engine:8000/alert/hook
+        send_resolved: true
+        http_config:
+          basic_auth:
+            username: cloudguardian
+            password: cloudguardian-hook

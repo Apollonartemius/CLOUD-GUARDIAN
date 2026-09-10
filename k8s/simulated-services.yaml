@@ -60,6 +60,8 @@ spec:
               value: "250"
             - name: BASE_LATENCY_MS
               value: "40"
+            - name: BASE_ERROR_RATE
+              value: "0.005"
           resources:
             requests:
               cpu: 50m
@@ -119,6 +121,8 @@ spec:
               value: "400"
             - name: BASE_LATENCY_MS
               value: "80"
+            - name: BASE_ERROR_RATE
+              value: "0.01"
           resources:
             requests:
               cpu: 50m
@@ -178,6 +182,8 @@ spec:
               value: "300"
             - name: BASE_LATENCY_MS
               value: "60"
+            - name: BASE_ERROR_RATE
+              value: "0.007"
           resources:
             requests:
               cpu: 50m

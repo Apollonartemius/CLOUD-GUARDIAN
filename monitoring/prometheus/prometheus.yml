@@ -5,6 +5,13 @@ global:
 rule_files:
   - /etc/prometheus/rules.yml
 
+# Firing/resolved alerts are delivered to Alertmanager, which routes them
+# to the decision-engine /alert/hook (see monitoring/alertmanager).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   # Sophisticated: auth/payment/inventory are now Kubernetes (k3d) pods,
   # exposed on the host via nodeports mapped to 8001/8002/8003. Prometheus

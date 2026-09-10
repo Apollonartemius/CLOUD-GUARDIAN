@@ -34,8 +34,10 @@ Exposes:
   POST /remediate/{service}   -> manually trigger remediation (useful for demos)
 """
 
+import base64
 import json
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -48,7 +50,7 @@ import prometheus_client
 import psycopg2
 import requests
 import tracing
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
 from logutil import get_logger, init_logging, log_error, log_info, log_warning
@@ -89,6 +91,9 @@ SERVICE_TOKEN = auth.create_token(subject="decision-engine", role="service")
 # swapped in behind the same function - it just needs a signed publish.
 ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "")
 ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "cloudguardian")
+# Shared secret protecting the Alertmanager -> decision-engine webhook hook.
+# Alertmanager sends it as HTTP Basic auth (user "cloudguardian").
+ALERT_HOOK_SECRET = os.getenv("ALERT_HOOK_SECRET", "cloudguardian-hook")
 
 SERVICES = ["auth-service", "payment-service", "inventory-service"]
 
@@ -110,7 +115,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-auth.install_auth(app, operator_only_paths=("/remediate",))
+# /alert/hook is public because it brings its own HTTP Basic auth (the
+# Alertmanager shared secret) instead of a JWT.
+auth.install_auth(
+    app,
+    public_paths=("/health", "/metrics", "/auth/login", "/auth/oidc/login", "/auth/oidc/callback", "/alert/hook"),
+    operator_only_paths=("/remediate",),
+)
 
 
 def get_connection():
@@ -833,3 +844,66 @@ def manual_remediate(service: str):
     cur.close()
     conn.close()
     return {"incident_id": incident_id, "success": success, "message": message}
+
+
+@app.post("/alert/hook")
+def alertmanager_hook(request: Request, payload: dict):
+    """Receive Prometheus Alertmanager webhook notifications.
+
+    Called by the Alertmanager service (monitoring/alertmanager) whenever an
+    alerting rule fires or resolves. This is the single funnel where all
+    alerts cross into the human-notification path: they are logged, then
+    pushed outward through the same `send_alert` Slack-compatible webhook
+    that decision-engine incidents use (ALERT_WEBHOOK_URL). Nothing extra
+    is needed locally - the hook also makes the fire/resolve visible in the
+    logs purely from Prometheus rules.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    try:
+        scheme, _, creds = auth_header.partition(" ")
+        decoded = base64.b64decode(creds.encode()).decode("utf-8") if creds else ""
+        user, _, password = decoded.partition(":")
+        ok = (
+            scheme.lower() == "basic"
+            and user == "cloudguardian"
+            and bool(password)
+            and secrets.compare_digest(password, ALERT_HOOK_SECRET)
+        )
+    except Exception:  # noqa: BLE001 - malformed auth header must not crash the hook
+        ok = False
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid hook credentials")
+
+    status = payload.get("status", "firing")
+    alerts = payload.get("alerts") or []
+    if not alerts:
+        return {"received": 0}
+    received = 0
+    for alert in alerts[:20]:
+        labels = alert.get("labels", {})
+        annotations = alert.get("annotations", {})
+        name = labels.get("alertname", "unknown")
+        severity = labels.get("severity", "warning")
+        summary = annotations.get("summary", "")
+        description = annotations.get("description", "")
+        message = f"Alertmanager [{name}] {summary} - {description}".strip()
+        if alert.get("status") == "resolved" or status == "resolved":
+            log_info(
+                logger,
+                "alert_hook_resolved",
+                alert=name,
+                severity=severity,
+                service=labels.get("service") or labels.get("job") or "unknown",
+            )
+            send_alert("info", f"RESOLVED {message}", None)
+        else:
+            log_warning(
+                logger,
+                "alert_hook_firing",
+                alert=name,
+                severity=severity,
+                service=labels.get("service") or labels.get("job") or "unknown",
+            )
+            send_alert(severity, message, None)
+        received += 1
+    return {"received": received}
