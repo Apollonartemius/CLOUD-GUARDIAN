@@ -68,7 +68,16 @@ DANGER_THRESHOLDS = {
     "error_rate": float(os.getenv("ERROR_RATE_THRESHOLD", 0.15)),
 }
 
-SERVICES = ["auth-service", "payment-service", "inventory-service"]
+# Services to watch. Add a cloud job (e.g. "cloud-service-render") to
+# cover services running on Render/Cloud Run; WATCH_SERVICES stays in
+# sync with decision-engine / metrics-collector / anomaly-detector.
+SERVICES = [
+    s.strip()
+    for s in os.getenv(
+        "WATCH_SERVICES", "auth-service,payment-service,inventory-service"
+    ).split(",")
+    if s.strip()
+]
 METRICS = ["cpu_percent", "memory_mb", "latency_ms", "error_rate"]
 
 app = FastAPI(title="forecast-engine")

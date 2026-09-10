@@ -45,8 +45,8 @@ from datetime import datetime, timedelta, timezone
 
 import api_versioning
 import auth
+import cloud_remediator
 import db_utils
-import k8s_remediator
 import oidc
 import prometheus_client
 import rate_limit
@@ -97,7 +97,17 @@ ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "cloudguardian")
 # Alertmanager sends it as HTTP Basic auth (user "cloudguardian").
 ALERT_HOOK_SECRET = os.getenv("ALERT_HOOK_SECRET", "cloudguardian-hook")
 
-SERVICES = ["auth-service", "payment-service", "inventory-service"]
+# Services this engine watches and can remediate. The local k3d fleet
+# defaults to the three simulated services; add a cloud job name (e.g.
+# "cloud-service-render", "cloud-service-gcp") to self-heal real clouds.
+# The restart backend per service is resolved by cloud_remediator.
+SERVICES = [
+    s.strip()
+    for s in os.getenv(
+        "WATCH_SERVICES", "auth-service,payment-service,inventory-service"
+    ).split(",")
+    if s.strip()
+]
 
 app = FastAPI(title="decision-engine")
 # Only the dashboard (and a handful of dev origins) may call these APIs from
@@ -132,8 +142,23 @@ def get_connection():
 
 
 def restart_container(service_name: str) -> tuple[bool, str]:
-    """Trigger a Kubernetes rollout restart of the service's Deployment."""
-    return k8s_remediator.rollout_restart_deployment(service_name)
+    """Restart a service on whichever platform it runs on.
+
+    k8s (local fleet), Render API, or Cloud Run v2. The platform is
+    resolved by the multi-platform dispatcher; the local k8d fleet keeps
+    the exact Kubernetes rollout-restart behaviour it always had.
+    """
+    return cloud_remediator.remediate(service_name)[:2]
+
+
+def remediation_action(service_name: str, success: bool, action: str) -> str:
+    """Platform-aware action_taken label for the incident log.
+
+    e.g. k8s_rollout_restart | render_restart | cloud_run_restart
+         ..._failed            ..._failed          ..._failed
+    """
+    base = f"{cloud_remediator.backend_for(service_name)}_{action}"
+    return base if success else f"{base}_failed"
 
 
 def init_db():
@@ -332,10 +357,10 @@ def trigger_remediation(cur, conn, service: str, confidences: list, reason_suffi
         span.set_attribute("incident_type", "reactive")
         span.set_attribute("service", service)
         span.set_attribute("correlation_id", correlation_id)
-        span.set_attribute("action", "k8s_rollout_restart")
         success, message = restart_container(service)
+        action_taken = remediation_action(service, success, "rollout_restart")
+        span.set_attribute("action", action_taken)
 
-    action_taken = "k8s_rollout_restart" if success else "k8s_rollout_restart_failed"
     outcome = "pending" if success else "failed"
 
     cur.execute(
@@ -405,9 +430,9 @@ def trigger_preemptive_action(cur, conn, service: str, risk: dict):
         span.set_attribute("metric", metric)
         span.set_attribute("breach_risk", str(round(risk_score, 3)))
         span.set_attribute("eta_minutes", str(round(eta_minutes, 1)))
-        span.set_attribute("action", "k8s_proactive_rollout")
         success, message = restart_container(service)
-    action_taken = "k8s_proactive_rollout" if success else "k8s_proactive_rollout_failed"
+        action_taken = remediation_action(service, success, "proactive_rollout")
+        span.set_attribute("action", action_taken)
     outcome = "pending" if success else "failed"
     reason = (
         f"forecast breach risk {risk_score:.2f} for {metric} "

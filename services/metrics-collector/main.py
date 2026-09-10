@@ -42,7 +42,18 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian",
 )
-SERVICES = ["auth-service", "payment-service", "inventory-service"]
+# Services to poll. This becomes dynamic in effect: prom_instant_query
+# returns every labelled service, but only names in this list get rows.
+# Add a cloud job (e.g. "cloud-service-render") to also track Render /
+# Cloud Run services; WATCH_SERVICES stays in sync decision-engine /
+# anomaly-detector / forecast-engine.
+SERVICES = [
+    s.strip()
+    for s in os.getenv(
+        "WATCH_SERVICES", "auth-service,payment-service,inventory-service"
+    ).split(",")
+    if s.strip()
+]
 
 app = FastAPI(title="metrics-collector")
 # Only the dashboard (and a handful of dev origins) may call these APIs from

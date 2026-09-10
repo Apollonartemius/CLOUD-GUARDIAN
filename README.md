@@ -423,16 +423,16 @@ curl.exe "http://localhost:8020/anomalies/current?minutes=5"
 
 **Two honest things worth knowing:**
 
-- **Remediation won't work for this service.** The decision-engine
-  restarts services by calling the Kubernetes API for a Deployment on
-  your local k3d cluster — but this service runs on Render's
-  infrastructure, not as a k3s Deployment on your machine, so that
-  call will fail (you'll see an incident logged with `outcome:
-  "failed"`). This is a genuine architectural boundary, not a bug —
-  fixing it would mean adding a second remediation executor (e.g. via
-  Render's own API, which does support triggering a restart) alongside
-  the existing k8s-based one. Worth listing as a known limitation
-  with a clear next step in your report, rather than hiding it.
+- **Remediation now works on Render (and Cloud Run) too.** The
+  decision-engine routes each service to its owning platform via the
+  multi-platform dispatcher (`cloud_remediator`): the local k3d fleet
+  restarts through the Kubernetes API, while Render/Cloud Run services
+  restart through their own REST APIs (`render_remediator`,
+  `cloud_run_remediator`). Every service sits on exactly one platform;
+  cloud executors fail closed (no key configured -> `outcome: failed`
+  incident, same as before). To activate real-cloud self-healing, add the
+  cloud credentials (`RENDER_API_KEY`+`RENDER_SERVICE_IDS` /
+  `GCP_PROJECT_ID`) and list the cloud job names in `WATCH_SERVICES`.
 - **Free services on Render sleep after 15 minutes of inactivity** and
   take ~30-50s to wake on the next request. In practice, Prometheus
   scraping it every few seconds should keep it continuously active
@@ -640,11 +640,15 @@ zero when idle, and is **$0 within the free tier** (2M requests +
    see `{"status": "healthy", "service": "cloud-service-gcp"}`.
 
 Like Render, this is a genuinely **non-simulated second/third cloud
-environment** your local platform watches. The same honest limitations
-apply: the decision-engine's `k8s_rollout_restart` remediation targets
-your local k3d cluster, so it can't restart this or the Render service
-(it logs `outcome: failed` if it tries) — the natural next step, noted in
-your report, is a serverless-API remediation executor.
+environment** your local platform watches. The decision-engine can now
+remediate it too: the multi-platform executor routes Cloud Run services
+to the Cloud Run v2 API (`cloud_run_remediator`, a template-PATCH that
+forces a new revision) and Render services to the Render API
+(`render_remediator`), alongside the original local-k3s path
+(`k8s_remediator`). Set `WATCH_SERVICES`, plus `RENDER_API_KEY`/
+`RENDER_SERVICE_IDS` for the Render side or `GCP_PROJECT_ID`/
+`GCP_ACCESS_TOKEN` for the Cloud Run side — otherwise those executors
+fail closed and log `outcome: failed`, exactly like before.
 
 **Destroy it when done** so there are no surprise charges:
 ```powershell
@@ -817,10 +821,12 @@ on Render and GCP Cloud Run) — with the monitored fleet running on a
 real Kubernetes cluster with self-healing and HPA autoscaling. Honest
 next steps:
 
-- **A second remediation executor** so the decision-engine can restart
-  serverless services too (Render/Cloud Run APIs), closing the
-  "remediation can't reach the cloud" boundary documented in Parts 11b
-  and 11d.
+- **Real-cloud Credentials / deploy**: the multi-platform remediation
+  executor (Render + Cloud Run APIs) now ships alongside the k8s one,
+  but is dormant until `RENDER_API_KEY`/`RENDER_SERVICE_IDS` (Render) or
+  `GCP_PROJECT_ID`/`GCP_ACCESS_TOKEN` (Cloud Run) are configured and the
+  job names added to `WATCH_SERVICES` — and `terraform/gcp-real` still
+  needs a billing-enabled project to actually apply.
 - **Ship the whole platform to a real cloud Kubernetes** (GKE Autopilot
   is the natural fit — the `gcp-real` workspace already deploys a Cloud
   Run service; a GKE cluster would let the remediation + HPA story run

@@ -56,7 +56,16 @@ ISOLATION_FOREST_MIN_CONFIDENCE = float(os.getenv("ISOLATION_FOREST_MIN_CONFIDEN
 IF_RETRAIN_INTERVAL_SECONDS = int(os.getenv("IF_RETRAIN_INTERVAL_SECONDS", 300))
 IF_MIN_TRAINING_ROWS = int(os.getenv("IF_MIN_TRAINING_ROWS", 50))
 
-SERVICES = ["auth-service", "payment-service", "inventory-service"]
+# Services to watch. Add a cloud job (e.g. "cloud-service-render") to
+# cover services running on Render/Cloud Run; WATCH_SERVICES stays in
+# sync with decision-engine / metrics-collector / forecast-engine.
+SERVICES = [
+    s.strip()
+    for s in os.getenv(
+        "WATCH_SERVICES", "auth-service,payment-service,inventory-service"
+    ).split(",")
+    if s.strip()
+]
 METRICS = ["cpu_percent", "memory_mb", "latency_ms", "error_rate"]
 
 app = FastAPI(title="anomaly-detector")
