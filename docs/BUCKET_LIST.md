@@ -3,7 +3,7 @@
 Everything that is **recorded but not yet done**, kept here so it is never lost.
 Nothing in this list is required for the capstone demo — it is the forward path.
 
-Last updated: 2026-09-10
+Last updated: 2026-09-11
 
 ---
 
@@ -24,7 +24,7 @@ Status: all `OPEN` unless noted. Priorities reflect the "if this ever goes live"
 | 9 | Real Vault API integration (dynamic secrets) | **DONE** | High* | Medium | Vault runs a DB secrets engine (`postgresql-database-plugin`) wired to Postgres: `database/roles/cloudguardian-app` issues **short-lived per-call roles** (default 1h / max 24h) with only DML grants (no DDL/owner), and revocation statements revoke-grants→NOLOGIN→DROP so leases clean up fully. `monitoring/vault/seed.sh` seeds it idempotently; `scripts/vault_dyncred_demo.sh` proves the loop: dynamic account reads the DB (incident count), lease revoked, same credentials then fail to authenticate (verified live end-to-end; no stranded roles after runs) |
 | 10 | Alertmanager + external notifications (email/Slack/webhook) | **DONE** | High | Small | Prometheus rules now deliver to Alertmanager → `decision-engine /alert/hook` (Basic-auth protected), which logs every fire/resolve and pushes outward via `send_alert` → `ALERT_WEBHOOK_URL` (Slack-compatible). Verified: AM API test alert → hook logged + forwarded. Wire `ALERT_WEBHOOK_URL` to get real human delivery |
 | 11 | CI security scanning (trivy / pip-audit / Dependabot) | **DONE** | Medium | Small | `.github/workflows/security.yml` runs ruff + pytest (3.11), per-service `pip-audit`, and a new trivy filesystem scan (CRITICAL/HIGH, SARIF → GitHub Security tab) on every push/PR. `.github/dependabot.yml` opens weekly PRs for pip + GitHub Actions; root aggregator `requirements.txt` gives Dependabot the full service dependency set |
-| 12 | Real cloud deployment (Cloud Run/GCP) | OPEN (Terraform written) | High* | Large | IaC exists in `terraform/gcp-real` but was never applied (blocked: no gcloud + no billing). Once applied, the NEW multi-platform remediator (`cloud_remediator` -> `cloud_run_remediator`/`render_remediator`) can restart it just like the local fleet |
+| 12 | Real cloud deployment (Cloud Run/GCP) | OPEN (effectively frozen) | High* | Large | IaC exists in `terraform/gcp-real` and is apply-ready, but is effectively **frozen by a hard NO-PAY constraint** (see Section 3): the $300 GCP free-trial credits will not release until the user adds a **UPI auto-payment** AND pays ₹1000 + ₹300 (~₹15000) upfront, which the user refuses. `gcloud` is also not installed. If the constraint ever lifts, applying is: `terraform apply -var project_id=<id>` — and the NEW multi-platform remediator (`cloud_remediator` -> `cloud_run_remediator`) can then restart it just like the local fleet |
 
 \* = only matters if actually deploying; not for the capstone/demo.
 
@@ -55,6 +55,6 @@ Leftovers from the performance/robustness audit and the demo-polish bucket. `OPE
 |------|---------|
 | `chmod 600` on `.kube/*` | FUSE mount ignores POSIX modes (recorded limitation; SA token is low-privilege and dir is gitignored) |
 | File bind-mounts on the FUSE `fuseblk` data volume | runc fails to recreate containers that bind-mount a file from `/mnt/New_Volume` (spaces in path + FUSE). Worked around locally via `VAULT_SECRETS_SOURCE` override in gitignored `.env`; default in `docker-compose.yml` stays portable |
-| `gcloud` / real GCP deployment | `gcloud` not installed + no billing-enabled project (gap #12) |
+| `gcloud` / real GCP deployment | Hard **NO-PAY** constraint (gap #12): the $300/90-day GCP trial credits only release after adding a UPI auto-payment method AND paying ₹1000 + ₹300 (~₹15000) upfront — user refuses to pay for any service. `gcloud` CLI also not installed. Frozen unless the user changes this |
 | OIDC live login | Requires the user's real Google OAuth client |
 | ~~7 host-side test failures~~ | **RESOLVED** — `protobuf` upgraded to 6.33.6 in the dev venv; Python 3.14 now runs the full suite green (30/30) |
