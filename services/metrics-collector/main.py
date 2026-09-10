@@ -25,6 +25,7 @@ import api_versioning
 import auth
 import db_utils
 import prometheus_client
+import rate_limit
 import requests
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +63,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 auth.install_auth(app)
+rate_limit.install_rate_limit(app)
 
 
 def get_connection():

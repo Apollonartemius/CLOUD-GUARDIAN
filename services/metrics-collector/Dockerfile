@@ -10,6 +10,7 @@ COPY logutil.py .
 COPY vault_client.py .
 COPY api_versioning.py .
 COPY db_utils.py .
+COPY rate_limit.py .
 
 COPY main.py .
 

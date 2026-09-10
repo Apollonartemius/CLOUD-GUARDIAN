@@ -523,6 +523,20 @@ The dashboard's **AI Copilot** panel wraps all of this.
   `JWT_PREVIOUS_SECRETS`, so rotating the signing key doesn't log
   everyone out. Rotate via: new secrets into `JWT_PREVIOUS_SECRETS` →
   swap `JWT_SECRET` → drop the old key after tokens expire.
+- **Refresh tokens** — `POST /auth/login` now returns a 6h `access`
+  token *plus* a 7d `refresh_token` (`typ: refresh`); `POST /auth/refresh`
+  validates it and rotates to a brand-new pair. Refresh tokens carry a
+  `jti` and are rejected as Bearer on protected routes (401), so a
+  leaked short-lived access token can't be reused forever. Verified live:
+  refresh → new pair; refresh-as-Bearer 401 vs access 200.
+- **Rate limiting + multitenancy** — a dependency-free token-bucket
+  middleware (`rate_limit.py`, shared + copied into every service) keys
+  on `(tenant, client IP)`, exposes the tenant to handlers via
+  `request.state.tenant` and echoes it back in `X-Tenant-ID`. Bursts
+  over the default 300 req/min (60 burst) get a 429 with `Retry-After`,
+  and tenants are isolated (one noisy tenant can't starve another).
+  Verified live with 70 rapid requests → 429s on one tenant while a
+  second tenant sailed through.
 - **API versioning** — every platform-service route is served at both
   `/<path>` and `/v1/<path>` (ASGI prefix rewrite via shared
   `api_versioning.py`): old clients keep working, new ones can pin a
@@ -581,6 +595,12 @@ The dashboard's **AI Copilot** panel wraps all of this.
 - **Grafana** — the provisioned overview dashboard now has an
   **Alerting & Failure Injection** section (firing-alert count, active
   alerts table, and error-rate / p95-latency vs their alert SLOs).
+- **Vault dynamic secrets** — beyond the static KV store, Vault runs a
+  Postgres DB secrets engine: `database/roles/cloudguardian-app` issues
+  **short-lived per-call DB roles** (default 1h) with DML-only grants,
+  revoked cleanly on lease end. `scripts/vault_dyncred_demo.sh` proves
+  the whole loop live: dynamic account reads the DB → lease revoked →
+  the same credentials immediately fail to authenticate.
 
 ---
 

@@ -13,6 +13,7 @@ COPY oidc.py .
 COPY tracing.py .
 COPY api_versioning.py .
 COPY db_utils.py .
+COPY rate_limit.py .
 
 COPY main.py .
 

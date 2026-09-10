@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import time
 
 from fastapi import Request
@@ -35,6 +36,9 @@ except Exception as exc:  # noqa: BLE001 - refuse to sign with an insecure key
     raise RuntimeError(f"cannot resolve JWT_SECRET: {exc}") from exc
 
 TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", 21600))
+# Refresh tokens (gap #7): long-lived bearer that can only be exchanged for a
+# fresh access token via POST /auth/refresh (which rotates it in turn).
+REFRESH_TOKEN_TTL_SECONDS = int(os.getenv("REFRESH_TOKEN_TTL_SECONDS", 604800))
 
 # Rotating-keys support (gap #7): the CURRENT key signs new tokens; any
 # PREVIOUS keys (comma-separated in JWT_PREVIOUS_SECRETS after a rotation)
@@ -59,10 +63,28 @@ def _b64d(data: bytes) -> bytes:
 
 
 def create_token(subject: str, role: str = "operator", ttl: int = TOKEN_TTL_SECONDS) -> str:
+    return _token("access", subject, role, ttl)
+
+
+def create_refresh_token(subject: str, role: str = "operator") -> str:
+    """Long-lived refresh token (typ=refresh). Only valid for /auth/refresh."""
+    return _token("refresh", subject, role, REFRESH_TOKEN_TTL_SECONDS)
+
+
+def _token(kind: str, subject: str, role: str, ttl: int) -> str:
     now = int(time.time())
     header = _b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
     payload = _b64(
-        json.dumps({"sub": subject, "role": role, "iat": now, "exp": now + ttl}).encode()
+        json.dumps(
+            {
+                "sub": subject,
+                "role": role,
+                "typ": kind,
+                "jti": secrets.token_hex(8),
+                "iat": now,
+                "exp": now + ttl,
+            }
+        ).encode()
     )
     signing_input = header + b"." + payload
     sig = _b64(hmac.new(JWT_SECRET.encode(), signing_input, hashlib.sha256).digest())
@@ -91,6 +113,14 @@ def decode_token(token: str):
         return None
 
 
+def decode_refresh_token(token: str):
+    """Like decode_token but ONLY accepts typ=refresh tokens."""
+    payload = decode_token(token)
+    if payload is None or payload.get("typ") != "refresh":
+        return None
+    return payload
+
+
 def install_auth(app, public_paths=("/health", "/metrics", "/auth/login", "/auth/oidc/login", "/auth/oidc/callback"), operator_only_paths=()):
     """JWT middleware. `operator_only_paths` are prefixes that require the
     `operator` role (e.g. manual remediation) so plain service tokens can't
@@ -107,6 +137,10 @@ def install_auth(app, public_paths=("/health", "/metrics", "/auth/login", "/auth
         payload = decode_token(token)
         if payload is None:
             return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+        # refresh tokens may ONLY be exchanged at /auth/refresh, never used
+        # as access tokens (gap #7 token separation).
+        if payload.get("typ") not in (None, "access"):
+            return JSONResponse(status_code=401, content={"detail": "access token required"})
 
         if any(request.url.path.startswith(p) for p in operator_only_paths):
             if payload.get("role") != "operator":

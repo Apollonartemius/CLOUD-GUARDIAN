@@ -49,6 +49,7 @@ import db_utils
 import k8s_remediator
 import oidc
 import prometheus_client
+import rate_limit
 import requests
 import tracing
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -120,9 +121,10 @@ app.add_middleware(
 # Alertmanager shared secret) instead of a JWT.
 auth.install_auth(
     app,
-    public_paths=("/health", "/metrics", "/auth/login", "/auth/oidc/login", "/auth/oidc/callback", "/alert/hook"),
+    public_paths=("/health", "/metrics", "/auth/login", "/auth/refresh", "/auth/oidc/login", "/auth/oidc/callback", "/alert/hook"),
     operator_only_paths=("/remediate",),
 )
+rate_limit.install_rate_limit(app)
 
 
 def get_connection():
@@ -752,7 +754,37 @@ def login(payload: dict):
     if email != ADMIN_EMAIL or password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="invalid credentials")
     token = auth.create_token(subject=email, role="operator")
-    return {"token": token, "token_type": "bearer", "expires_in": auth.TOKEN_TTL_SECONDS, "email": email}
+    refresh = auth.create_refresh_token(subject=email, role="operator")
+    return {
+        "token": token,
+        "refresh_token": refresh,
+        "token_type": "bearer",
+        "expires_in": auth.TOKEN_TTL_SECONDS,
+        "refresh_expires_in": auth.REFRESH_TOKEN_TTL_SECONDS,
+        "email": email,
+    }
+
+
+@app.post("/auth/refresh")
+def refresh(payload: dict):
+    """Exchange a valid refresh token for a NEW access + refresh token pair
+    (rotation). Only a typ=refresh token is accepted; access tokens cannot be
+    redeemed here."""
+    body = payload or {}
+    claims = auth.decode_refresh_token(body.get("refresh_token", ""))
+    if claims is None:
+        raise HTTPException(status_code=401, detail="invalid or expired refresh token")
+    email = claims.get("sub", "")
+    token = auth.create_token(subject=email, role=claims.get("role", "operator"))
+    refresh = auth.create_refresh_token(subject=email, role=claims.get("role", "operator"))
+    return {
+        "token": token,
+        "refresh_token": refresh,
+        "token_type": "bearer",
+        "expires_in": auth.TOKEN_TTL_SECONDS,
+        "refresh_expires_in": auth.REFRESH_TOKEN_TTL_SECONDS,
+        "email": email,
+    }
 
 
 # --- OIDC SSO (Phase 9) -----------------------------------------------------

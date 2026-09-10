@@ -40,3 +40,38 @@ vault kv put "secret/cloudguardian/global" \
     ADMIN_EMAIL="$ADMIN_EMAIL" \
     ADMIN_PASSWORD="$ADMIN_PASSWORD" >/dev/null
 echo "[seed] done - secret/cloudguardian/global updated"
+
+# --- database secrets engine (gap #9: dynamic short-lived DB credentials) --
+# Vault connects to Postgres as the superuser defined by compose and issues
+# per-call, time-limited roles that only have DML access (never DDL/owner).
+echo "[seed] configuring database secrets engine ..."
+if ! vault secrets list -format=json | grep -q '"database/"'; then
+    vault secrets enable database
+    echo "[seed] enabled database secrets engine"
+fi
+
+vault write database/config/cloudguardian \
+    plugin_name=postgresql-database-plugin \
+    allowed_roles="cloudguardian-app" \
+    connection_url="postgresql://{{username}}:{{password}}@postgres:5432/cloudguardian?sslmode=disable" \
+    username="cloudguardian" \
+    password="cloudguardian" >/dev/null
+echo "[seed] database/config/cloudguardian configured (superuser connection)"
+
+vault write database/roles/cloudguardian-app \
+    db_name=cloudguardian \
+    default_ttl="1h" \
+    max_ttl="24h" \
+    creation_statements='
+CREATE ROLE "{{name}}" WITH LOGIN PASSWORD '"'"'{{password}}'"'"' VALID UNTIL '"'"'{{expiration}}'"'"';
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "{{name}}";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "{{name}}";
+' \
+    revocation_statements='
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM "{{name}}";
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM "{{name}}";
+ALTER ROLE "{{name}}" NOLOGIN;
+DROP ROLE IF EXISTS "{{name}}";
+' >/dev/null
+echo "[seed] database/roles/cloudguardian-app configured (TTL 1h / max 24h)"
+echo "[seed] all done"

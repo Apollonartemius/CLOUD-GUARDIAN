@@ -29,6 +29,7 @@ import api_versioning
 import auth
 import db_utils
 import prometheus_client
+import rate_limit
 import requests
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -69,6 +70,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 auth.install_auth(app)
+rate_limit.install_rate_limit(app)
 
 agent_reports_total = prometheus_client.Counter(
     "agent_reports_total", "RCA reports generated", ["model"]

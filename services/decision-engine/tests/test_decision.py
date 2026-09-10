@@ -460,3 +460,183 @@ def test_db_pool_rebuilds_on_stale_connection(load, monkeypatch):
     conn.custom(2)
     assert "custom:2" in healthy.calls
     assert "custom:2" not in broken.calls
+
+
+# ---------------------------------------------------------------------------
+# Gap #7: JWT refresh tokens
+# ---------------------------------------------------------------------------
+
+def _login(de):
+    return de.login({"email": de.ADMIN_EMAIL, "password": de.ADMIN_PASSWORD})
+
+
+def test_jwt_login_returns_refresh_token(load):
+    de = load("decision-engine")
+    login_resp = _login(de)
+    assert login_resp["token"]
+    assert login_resp["refresh_token"]
+    assert login_resp["refresh_expires_in"] == de.auth.REFRESH_TOKEN_TTL_SECONDS
+
+
+def test_refresh_token_is_separated_from_access_token(load):
+    de = load("decision-engine")
+    login_resp = _login(de)
+
+    claims = de.auth.decode_refresh_token(login_resp["refresh_token"])
+    assert claims is not None
+    assert claims["typ"] == "refresh"
+    assert claims["sub"] == de.ADMIN_EMAIL
+    assert claims["role"] == "operator"
+
+    # an access token is NOT redeemable as a refresh token
+    assert de.auth.decode_refresh_token(login_resp["token"]) is None
+
+    # and a refresh token is NOT usable as an access token (middleware rejects
+    # typ != access on protected endpoints)
+    assert de.auth.decode_token(login_resp["refresh_token"])["typ"] == "refresh"
+
+
+def test_refresh_endpoint_rotates_token_pair(load):
+    de = load("decision-engine")
+    login_resp = _login(de)
+
+    pair = de.refresh({"refresh_token": login_resp["refresh_token"]})
+    assert pair["token"]
+    assert pair["refresh_token"] and pair["refresh_token"] != login_resp["refresh_token"]
+    assert pair["email"] == de.ADMIN_EMAIL
+    assert de.auth.decode_token(pair["token"])["typ"] == "access"
+    assert de.auth.decode_refresh_token(pair["refresh_token"])["typ"] == "refresh"
+
+
+def test_refresh_endpoint_rejects_access_token_and_garbage(load):
+    from fastapi import HTTPException
+
+    de = load("decision-engine")
+    login_resp = _login(de)
+
+    with pytest.raises(HTTPException) as exc:
+        de.refresh({"refresh_token": login_resp["token"]})
+    assert exc.value.status_code == 401
+
+    with pytest.raises(HTTPException) as exc:
+        de.refresh({"refresh_token": "not.a.token"})
+    assert exc.value.status_code == 401
+
+    with pytest.raises(HTTPException) as exc:
+        de.refresh({})
+    assert exc.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Gap #6: rate limiting + multitenancy
+# ---------------------------------------------------------------------------
+
+def _isolated_rate_limit(de):
+    import importlib.util
+    import os
+
+    path = os.path.join(os.path.dirname(de.__file__), "rate_limit.py")
+    spec = importlib.util.spec_from_file_location("rate_limit_isolated", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_rate_limiter_token_bucket(load):
+    rl = _isolated_rate_limit(load("decision-engine"))
+    limiter = rl.RateLimiter(rate_per_sec=1.0, capacity=5.0)
+
+    for _ in range(5):
+        allowed, _retry = limiter.consume("k")
+        assert allowed
+    allowed, retry_after = limiter.consume("k")
+    assert allowed is False
+    assert retry_after >= 1
+
+    # a second key has its own bucket (per-tenant isolation)
+    allowed, _retry = limiter.consume("other")
+    assert allowed
+
+
+def test_rate_limiter_refills_over_time(load):
+    import time
+
+    rl = _isolated_rate_limit(load("decision-engine"))
+    limiter = rl.RateLimiter(rate_per_sec=10.0, capacity=5.0)
+    for _ in range(5):
+        limiter.consume("k")
+
+    tokens, _last = limiter._buckets["k"]
+    limiter._buckets["k"] = (tokens, time.monotonic() - 0.5)
+
+    allowed, _retry = limiter.consume("k")
+    assert allowed
+
+
+def test_rate_limit_middleware_tenancy_and_429(load):
+    import asyncio
+
+    from starlette.requests import Request
+    from starlette.responses import Response as StarletteResponse
+
+    rl = _isolated_rate_limit(load("decision-engine"))
+    rl.RATE_LIMIT_ENABLED = True
+    rl.RATE_LIMIT_RPM = 60
+    rl.RATE_LIMIT_BURST = 3
+    rl.DEFAULT_TENANT = "default"
+
+    middleware = rl._rate_limit_middleware_factory(rl.RateLimiter(rate_per_sec=1.0, capacity=3.0))
+
+    async def call_next(_request):
+        return StarletteResponse(status_code=200)
+
+    def make_scope(req_path, headers=(), host="10.0.0.1"):
+        return {
+            "type": "http",
+            "method": "GET",
+            "path": req_path,
+            "headers": [(k.lower().encode(), str(v).encode()) for k, v in headers],
+            "client": (host, 1234),
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("test", 80),
+            "state": {},
+        }
+
+    async def run(path, headers=()):
+        return await middleware(Request(make_scope(path, headers)), call_next)
+
+    async def main():
+        # first three calls from tenant "gold" pass
+        for _ in range(3):
+            resp = await run("/remediate/auth-service", [("X-Tenant-ID", "gold")])
+            assert resp.status_code == 200
+            assert resp.headers.get("x-tenant-id") == "gold"
+
+        # burst exhausted -> 429 with Retry-After + tenant echo
+        resp = await run("/remediate/auth-service", [("X-Tenant-ID", "gold")])
+        assert resp.status_code == 429
+        assert resp.headers.get("Retry-After")
+        assert b"gold" in resp.body
+
+        # a different tenant is unaffected (no cross-tenant starvation)
+        resp = await run("/remediate/payment-service", [("X-Tenant-ID", "silver")])
+        assert resp.status_code == 200
+        assert resp.headers.get("x-tenant-id") == "silver"
+
+        # requests without the tenant header fall back to the default tenant
+        resp = await run("/remediate/inventory-service")
+        assert resp.status_code == 200
+        assert resp.headers.get("x-tenant-id") == "default"
+
+        # exempt health/metadata paths are never throttled
+        for _ in range(5):
+            resp = await run("/health")
+            assert resp.status_code == 200
+
+        # tenant is exposed to handlers via request.state.tenant
+        req = Request(make_scope("/anything", [("X-Tenant-ID", "gold")]))
+        await middleware(req, call_next)
+        assert req.state.tenant == "gold"
+
+    asyncio.run(main())

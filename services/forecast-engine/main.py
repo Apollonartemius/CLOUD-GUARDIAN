@@ -39,6 +39,7 @@ import db_utils
 import numpy as np
 import pandas as pd
 import prometheus_client
+import rate_limit
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from logutil import get_logger, init_logging, log_error, log_info, log_warning
@@ -89,6 +90,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 auth.install_auth(app)
+rate_limit.install_rate_limit(app)
 
 forecast_breach_risk = prometheus_client.Gauge(
     "forecast_breach_risk",
