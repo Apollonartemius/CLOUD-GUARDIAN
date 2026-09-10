@@ -12,6 +12,7 @@ COPY k8s_remediator.py .
 COPY oidc.py .
 COPY tracing.py .
 COPY api_versioning.py .
+COPY db_utils.py .
 
 COPY main.py .
 

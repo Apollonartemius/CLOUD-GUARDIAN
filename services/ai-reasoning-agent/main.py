@@ -27,8 +27,8 @@ import time
 
 import api_versioning
 import auth
+import db_utils
 import prometheus_client
-import psycopg2
 import requests
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,7 +80,7 @@ agent_llm_failures = prometheus_client.Counter(
 
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+    return db_utils.get_connection()
 
 
 def init_db():

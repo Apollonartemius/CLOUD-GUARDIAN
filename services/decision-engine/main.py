@@ -45,10 +45,10 @@ from datetime import datetime, timedelta, timezone
 
 import api_versioning
 import auth
+import db_utils
 import k8s_remediator
 import oidc
 import prometheus_client
-import psycopg2
 import requests
 import tracing
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -126,7 +126,7 @@ auth.install_auth(
 
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+    return db_utils.get_connection()
 
 
 def restart_container(service_name: str) -> tuple[bool, str]:

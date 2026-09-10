@@ -308,6 +308,7 @@ def test_jwt_key_rotation(load, monkeypatch):
 
 
 def test_api_versioning_prefix_rewrite(load):
+    load("decision-engine")
     import asyncio
 
     import api_versioning
@@ -345,3 +346,117 @@ def test_api_versioning_prefix_rewrite(load):
     asyncio.run(wrapped(plain, _receive, _noop))
     assert recorder.scopes[0]["path"] == "/health"
     assert recorder.scopes[0]["root_path"] == ""
+
+
+class _FakeReal:
+    def __init__(self):
+        self.calls = []
+        self.boom = False
+
+    def cursor(self):
+        self.calls.append("cursor")
+        return self
+
+    def execute(self, sql):
+        if self.boom:
+            raise Exception("broken connection")
+        self.calls.append(f"execute:{sql}")
+
+    def fetchone(self):
+        self.calls.append("fetchone")
+        return (1,)
+
+    def commit(self):
+        self.calls.append("commit")
+
+    def rollback(self):
+        self.calls.append("rollback")
+
+    def close(self):
+        self.calls.append("close")
+
+    def custom(self, value=0):
+        self.calls.append(f"custom:{value}")
+
+
+class _FakePool:
+    def __init__(self, connections):
+        self.connections = list(connections)
+        self.returned = []
+
+    def getconn(self):
+        if not self.connections:
+            raise Exception("pool exhausted")
+        return self.connections.pop(0)
+
+    def putconn(self, conn):
+        self.returned.append(conn)
+
+
+def _isolated_db_utils(de):
+    """Import db_utils standalone so background loops in other loaded
+    service modules (which share sys.modules["db_utils"]) never touch
+    the fake pool we patch for the test."""
+    import importlib.util
+    import os
+
+    path = os.path.join(os.path.dirname(de.__file__), "db_utils.py")
+    spec = importlib.util.spec_from_file_location("db_utils_isolated", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_db_pool_proxy_close_returns_to_pool(load, monkeypatch):
+    dbm = _isolated_db_utils(load("decision-engine"))
+
+    real = _FakeReal()
+    pool_inst = _FakePool([real])
+    monkeypatch.setattr(dbm, "_pool", pool_inst)
+
+    conn = dbm.get_connection()
+    conn.custom(5)
+    assert "execute:SELECT 1" in real.calls
+    assert "custom:5" in real.calls
+
+    conn.close()
+    assert pool_inst.returned == [real]
+    conn.close()
+    assert len(pool_inst.returned) == 1
+
+
+def test_db_pool_context_manager_semantics(load, monkeypatch):
+    dbm = _isolated_db_utils(load("decision-engine"))
+
+    real = _FakeReal()
+    monkeypatch.setattr(dbm, "_pool", _FakePool([real]))
+    with dbm.get_connection() as conn:
+        conn.custom(1)
+    assert real.calls.count("commit") == 1
+    assert real.calls.count("rollback") == 1
+
+    real2 = _FakeReal()
+    monkeypatch.setattr(dbm, "_pool", _FakePool([real2]))
+    try:
+        with dbm.get_connection():
+            raise ValueError("boom")
+    except ValueError:
+        pass
+    assert real2.calls.count("commit") == 0
+    assert real2.calls.count("rollback") == 2
+
+
+def test_db_pool_rebuilds_on_stale_connection(load, monkeypatch):
+    dbm = _isolated_db_utils(load("decision-engine"))
+
+    broken = _FakeReal()
+    broken.boom = True
+    healthy = _FakeReal()
+    queues = iter([_FakePool([broken]), _FakePool([healthy])])
+    monkeypatch.setattr(dbm, "_pool", None)
+    monkeypatch.setattr(dbm, "_new_pool", lambda: next(queues))
+
+    conn = dbm.get_connection()
+    conn.custom(2)
+    assert "custom:2" in healthy.calls
+    assert "custom:2" not in broken.calls

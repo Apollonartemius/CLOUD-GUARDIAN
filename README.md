@@ -528,6 +528,12 @@ The dashboard's **AI Copilot** panel wraps all of this.
   `api_versioning.py`): old clients keep working, new ones can pin a
   version. Verified: `/v1/health` returns healthy and `/v1/incidents/history`
   still hits the JWT middleware.
+- **DB connection pooling** — `db_utils.py` (shared + copied into every
+  service) swaps connect-per-API-call for a small `ThreadedConnectionPool`
+  (size via `DB_POOL_MIN`/`DB_POOL_MAX`, defaults 1..5). A thin proxy makes
+  every existing `conn.close()` return the connection to the pool instead
+  of dropping it, and a `SELECT 1` probe transparently rebuilds the pool
+  after a Postgres restart so callers never touch a stale connection.
 - **Alertmanager** (gap #10) — Prometheus alerting rules now deliver to
   an Alertmanager service (`monitoring/alertmanager/alertmanager.yml`)
   which routes every fire/resolve to `decision-engine /alert/hook`

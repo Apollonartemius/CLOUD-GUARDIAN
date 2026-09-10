@@ -35,10 +35,10 @@ from datetime import datetime, timezone
 
 import api_versioning
 import auth
+import db_utils
 import numpy as np
 import pandas as pd
 import prometheus_client
-import psycopg2
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from logutil import get_logger, init_logging, log_error, log_info, log_warning
@@ -102,7 +102,7 @@ forecast_training_seconds = prometheus_client.Gauge(
 
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+    return db_utils.get_connection()
 
 
 def init_db():
