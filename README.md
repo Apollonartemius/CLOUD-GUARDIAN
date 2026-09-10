@@ -534,6 +534,12 @@ The dashboard's **AI Copilot** panel wraps all of this.
   every existing `conn.close()` return the connection to the pool instead
   of dropping it, and a `SELECT 1` probe transparently rebuilds the pool
   after a Postgres restart so callers never touch a stale connection.
+- **Postgres backups** — the `pg-backup` compose service takes a daily
+  `pg_dump -Fc` (compressed) into the `cloudguardian-backups` volume and
+  keeps 7 days. `scripts/db_restore.sh` lists / verifies / restores a
+  backup into a scratch DB so you can check the recovered incident count
+  before promoting it. Restore round-trip is verified in Part 5 runtime
+  checks.
 - **Alertmanager** (gap #10) — Prometheus alerting rules now deliver to
   an Alertmanager service (`monitoring/alertmanager/alertmanager.yml`)
   which routes every fire/resolve to `decision-engine /alert/hook`

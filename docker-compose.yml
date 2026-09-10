@@ -111,6 +111,33 @@ services:
       timeout: 5s
       retries: 10
 
+  pg-backup:
+    image: postgres:16-alpine
+    container_name: pg-backup
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-cloudguardian}
+      PGHOST: postgres
+      PGUSER: cloudguardian
+      PGDATABASE: cloudguardian
+    volumes:
+      - cloudguardian-backups:/backups
+    command: >
+      /bin/sh -c '
+      echo "pg-backup watcher started (daily pg_dump, 7-day retention)";
+      while true; do
+        pg_dump -Fc cloudguardian | gzip > /backups/cloudguardian-`date +%Y%m%d-%H%M%S`.dump.gz;
+        echo "backup written: `ls -1t /backups/cloudguardian-*.dump.gz | head -1`";
+        find /backups -name "cloudguardian-*.dump.gz" -mtime +7 -delete;
+        sleep 43200;
+      done
+      '
+    networks:
+      - cloudguardian
+    restart: unless-stopped
+
   metrics-collector:
     build: ./services/metrics-collector
     container_name: metrics-collector
@@ -348,4 +375,5 @@ networks:
 volumes:
   grafana-data:
   postgres-data:
+  cloudguardian-backups:
   localstack-data:
