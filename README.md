@@ -523,6 +523,11 @@ The dashboard's **AI Copilot** panel wraps all of this.
   `JWT_PREVIOUS_SECRETS`, so rotating the signing key doesn't log
   everyone out. Rotate via: new secrets into `JWT_PREVIOUS_SECRETS` →
   swap `JWT_SECRET` → drop the old key after tokens expire.
+- **API versioning** — every platform-service route is served at both
+  `/<path>` and `/v1/<path>` (ASGI prefix rewrite via shared
+  `api_versioning.py`): old clients keep working, new ones can pin a
+  version. Verified: `/v1/health` returns healthy and `/v1/incidents/history`
+  still hits the JWT middleware.
 - **Alertmanager** (gap #10) — Prometheus alerting rules now deliver to
   an Alertmanager service (`monitoring/alertmanager/alertmanager.yml`)
   which routes every fire/resolve to `decision-engine /alert/hook`

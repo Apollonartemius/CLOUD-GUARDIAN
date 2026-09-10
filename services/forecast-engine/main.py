@@ -33,6 +33,7 @@ import time
 import warnings
 from datetime import datetime, timezone
 
+import api_versioning
 import auth
 import numpy as np
 import pandas as pd
@@ -420,3 +421,6 @@ def forecast_history(
     cur.close()
     conn.close()
     return {"service": service, "metric": metric, "count": len(rows), "forecasts": rows}
+
+# Serve the identical routes under /v1/... (API versioning, gap #8)
+app = api_versioning.wrap(app)

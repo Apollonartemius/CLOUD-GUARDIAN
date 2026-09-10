@@ -43,6 +43,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import api_versioning
 import auth
 import k8s_remediator
 import oidc
@@ -907,3 +908,6 @@ def alertmanager_hook(request: Request, payload: dict):
             send_alert(severity, message, None)
         received += 1
     return {"received": received}
+
+# Serve the identical routes under /v1/... (API versioning, gap #8)
+app = api_versioning.wrap(app)

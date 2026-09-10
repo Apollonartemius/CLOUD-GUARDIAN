@@ -21,6 +21,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import api_versioning
 import auth
 import prometheus_client
 import psycopg2
@@ -248,3 +249,6 @@ def get_gaps(minutes: int = Query(60, ge=1, le=1440)):
     cur.close()
     conn.close()
     return {"count": len(rows), "gaps": rows}
+
+# Serve the identical routes under /v1/... (API versioning, gap #8)
+app = api_versioning.wrap(app)

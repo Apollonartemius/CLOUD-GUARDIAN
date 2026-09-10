@@ -29,6 +29,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import api_versioning
 import auth
 import pandas as pd
 import prometheus_client
@@ -318,3 +319,6 @@ def anomalies_history(service: str = Query(...), minutes: int = Query(60, ge=1, 
     cur.close()
     conn.close()
     return {"service": service, "count": len(rows), "anomalies": rows}
+
+# Serve the identical routes under /v1/... (API versioning, gap #8)
+app = api_versioning.wrap(app)

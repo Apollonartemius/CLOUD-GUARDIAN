@@ -25,6 +25,7 @@ import os
 import threading
 import time
 
+import api_versioning
 import auth
 import prometheus_client
 import psycopg2
@@ -537,3 +538,6 @@ def incident_report(incident_id: int):
     if row is None:
         raise HTTPException(status_code=404, detail=f"no report for incident {incident_id}")
     return row
+
+# Serve the identical routes under /v1/... (API versioning, gap #8)
+app = api_versioning.wrap(app)

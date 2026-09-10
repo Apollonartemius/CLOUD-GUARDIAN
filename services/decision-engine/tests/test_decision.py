@@ -305,3 +305,43 @@ def test_jwt_key_rotation(load, monkeypatch):
     monkeypatch.setenv("JWT_PREVIOUS_SECRETS", "")
     assert auth.decode_token(token) is None
     assert auth.decode_token(fresh) is not None
+
+
+def test_api_versioning_prefix_rewrite(load):
+    import asyncio
+
+    import api_versioning
+
+    class Recorder:
+        def __init__(self):
+            self.scopes = []
+
+        async def __call__(self, scope, receive, send):
+            self.scopes.append(dict(scope))
+
+    def _noop(_event):
+        return None
+
+    async def _receive():
+        return {"type": "http.request"}
+
+    recorder = Recorder()
+    wrapped = api_versioning.wrap(recorder)
+    http = {
+        "type": "http",
+        "path": "/v1/incidents/history",
+        "raw_path": b"/v1/incidents/history",
+        "root_path": "",
+    }
+    asyncio.run(wrapped(http, _receive, _noop))
+    seen = recorder.scopes[0]
+    assert seen["path"] == "/incidents/history"
+    assert seen["raw_path"] == b"/incidents/history"
+    assert seen["root_path"] == "/v1"
+    assert seen["type"] == "http"
+
+    recorder.scopes.clear()
+    plain = {"type": "http", "path": "/health", "raw_path": b"/health", "root_path": ""}
+    asyncio.run(wrapped(plain, _receive, _noop))
+    assert recorder.scopes[0]["path"] == "/health"
+    assert recorder.scopes[0]["root_path"] == ""
