@@ -78,23 +78,34 @@ CloudGuardian AI watches a fleet of microservices, detects when something goes w
 - [k3d](https://k3d.io) + kubectl
 - Git
 
-### 1. Create the Kubernetes cluster
+### 1. Build the simulated fleet image + create the k3d cluster
 
 ```bash
+# fleet image (also creates the docker network if missing)
+docker build -t cloudguardian-ai-simulated-service:latest services/simulated-service
+docker network inspect cloudguardian-net >/dev/null 2>&1 || docker network create cloudguardian-net
+
 k3d cluster create cloudguardian \
   --agents 1 \
   --port 8001:30001@serverlb \
   --port 8002:30002@serverlb \
   --port 8003:30003@serverlb
 
+# import the image into the cluster, then deploy the fleet manifests
+k3d image import cloudguardian-ai-simulated-service:latest -c cloudguardian
+mkdir -p .kube && k3d kubeconfig get cloudguardian > .kube/config
 kubectl apply -f k8s/
+kubectl rollout status deployment --all --timeout=180s
 ```
 
 ### 2. Start the platform
 
 ```bash
-docker compose up --build
+./start.sh
 ```
+
+`start.sh` creates the docker networks, restores the vault secrets file,
+and runs `docker compose up -d --build`.
 
 ### 3. Open the dashboard
 
@@ -113,6 +124,25 @@ curl -X POST "http://localhost:8002/chaos/cpu_spike?duration_seconds=90"
 The dashboard shows the spike, anomaly detection fires, the engine restarts the pod, and recovery is verified — all automatically.
 
 > **Tip:** the dashboard's *Failure Injection* panel uses fleet-wide chaos (fans out to every replica through the decision-engine), so the spike is always captured by Prometheus. Direct NodePort curl, as above, still works.
+
+---
+
+## Deployments
+
+| Plan | Where | Cost | When to use |
+|---|---|---|---|
+| **A — Render.com** | `render.yaml` shipped; deferred | card on file required | Not used (no-pay constraint) |
+| **B — GitHub Codespaces** (recommended for demos) | `.devcontainer/` | free via GitHub plan | Demo/screenshot sessions |
+| **C — Oracle Always-Free VM** (recommended always-on) | `docs/deploy-oracle-free.md` | $0/mo | A public at-cloud URL 24/7 |
+
+- **B:** create a Codespace on `main`. `postCreate.sh` builds + imports the
+  fleet image, creates the k3d cluster (nodeports 8001-8003), applies `k8s/`,
+  and runs `start.sh`. Open forwarded **port 3001**.
+- **C:** full runbook in `docs/deploy-oracle-free.md` — Ampere A1.Flex inside the
+  free tier, docker + k3d + compose, HTTPS via Caddy. Everything stays at $0.
+
+> Deployment A (Render) needs a credit card on file under the project's
+> no-pay constraint, so it is intentionally skipped.
 
 ---
 

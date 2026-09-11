@@ -1,0 +1,25 @@
+{
+  "name": "CloudGuardian AI - Codespaces",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "bash .devcontainer/postCreate.sh",
+  "forwardPorts": [3001, 8010, 8020, 8030, 8040, 8050, 8001, 8002, 8003, 9090, 9093, 3000],
+  "portsAttributes": {
+    "3001": { "label": "Mission Control (Dashboard)", "onAutoForward": "openBrowser" },
+    "3000": { "label": "Grafana", "onAutoForward": "notify" },
+    "9090": { "label": "Prometheus", "onAutoForward": "notify" },
+    "9093": { "label": "Alertmanager", "onAutoForward": "notify" },
+    "8030": { "label": "Decision Engine API", "onAutoForward": "notify" },
+    "8050": { "label": "AI Copilot API", "onAutoForward": "notify" },
+    "8001": { "label": "auth-service", "onAutoForward": "silent" },
+    "8002": { "label": "payment-service", "onAutoForward": "silent" },
+    "8003": { "label": "inventory-service", "onAutoForward": "silent" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-azuretools.vscode-docker", "ms-python.python"]
+    }
+  }
+}
