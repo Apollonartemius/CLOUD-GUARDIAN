@@ -268,9 +268,9 @@ demo_reactive() {
   hr; info "REACTIVE DEMO - chaos on $service (cpu_spike, ${duration}s, host port $port)"
   hr
 
-  info "Injecting fault via $service/chaos/cpu_spike (real CPU busy-loop)..."
-  curl -sS -m10 -X POST "http://localhost:$port/chaos/cpu_spike?duration_seconds=$duration" \
-    -H "Content-Type: application/json" || true
+  info "Injecting fault fleet-wide via decision-engine (cpu_spike, ${duration}s)..."
+  curl -sS -m10 -X POST "http://localhost:8030/chaos/$service/cpu_spike?duration_seconds=$duration" \
+    -H "Authorization: Bearer $token" || true
   echo ""
 
   show_anomalies "$service" 15 2 || return 1
@@ -293,9 +293,9 @@ demo_predictive() {
   hr; info "PREDICTIVE DEMO - forecast a breach on $service, act before it happens"
   hr
 
-  info "Injecting memory_leak into $service (quiet, slow - the interesting thing is the forecast)"
-  curl -sS -m10 -X POST "http://localhost:$port/chaos/memory_leak?duration_seconds=360" \
-    -H "Content-Type: application/json" >/dev/null 2>&1 || true
+  info "Injecting memory_leak fleet-wide into $service (quiet, slow - the interesting thing is the forecast)"
+  curl -sS -m10 -X POST "http://localhost:8030/chaos/$service/memory_leak?duration_seconds=360" \
+    -H "Authorization: Bearer $token" >/dev/null 2>&1 || true
 
   info "Waiting for the forecast-engine to retrain and flag a breach risk..."
   local risk="0" eta="5"

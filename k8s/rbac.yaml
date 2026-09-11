@@ -1,9 +1,11 @@
 # CloudGuardian AI - Decision-Engine Kubernetes RBAC (Phase 7)
 # ---------------------------------------------------------------------------
 # Least-privilege access for the self-healing loop. The decision-engine only
-# needs to: read pods (to inspect), read events, and PATCH deployments to
-# trigger a rollout restart. It does NOT get cluster-admin - a real platform
-# would give a remediation controller exactly this narrow scope.
+# needs to: read pods (to inspect), read events, PATCH deployments to
+# trigger a rollout restart, and CREATE pods/exec so it can fan chaos out to
+# every replica of a service (fleet-wide failure injection). It does NOT get
+# cluster-admin - a real platform would give a remediation controller exactly
+# this narrow scope.
 # ---------------------------------------------------------------------------
 apiVersion: v1
 kind: ServiceAccount
@@ -26,6 +28,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "watch"]

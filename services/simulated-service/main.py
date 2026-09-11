@@ -244,6 +244,18 @@ def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+@app.post("/chaos/stop")
+def stop_chaos():
+    with _lock:
+        _state["chaos_type"] = None
+        _state["chaos_until"] = 0.0
+        _state["leak_mb_per_tick"] = 0
+        _state["ramp_accum"] = 0.0
+        _state["ramp_per_tick"] = 0.0
+        _leak_buf.clear()
+    return {"service": SERVICE_NAME, "chaos_stopped": True}
+
+
 @app.post("/chaos/{chaos_type}")
 def trigger_chaos(
     chaos_type: str,
@@ -277,15 +289,3 @@ def trigger_chaos(
         "leak_mb_per_tick": leak_mb_per_tick or 0,
         "ramp_per_tick": ramp_per_tick,
     }
-
-
-@app.post("/chaos/stop")
-def stop_chaos():
-    with _lock:
-        _state["chaos_type"] = None
-        _state["chaos_until"] = 0.0
-        _state["leak_mb_per_tick"] = 0
-        _state["ramp_accum"] = 0.0
-        _state["ramp_per_tick"] = 0.0
-        _leak_buf.clear()
-    return {"service": SERVICE_NAME, "chaos_stopped": True}

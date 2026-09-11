@@ -74,6 +74,11 @@ export async function ensureSession() {
 export function logout() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(REFRESH_KEY);
+  // clear any stale SSO credentials out of the address bar before reloading,
+  // so the login screen can never auto-re-authenticate from an old URL
+  if (window.location.search) {
+    window.history.replaceState({}, "", window.location.pathname);
+  }
   window.location.reload();
 }
 
@@ -170,12 +175,15 @@ export function fetchIncidentReport(incidentId) {
 }
 
 export function triggerChaos(service, chaosType, durationSeconds = 90) {
-  const url = `${ENDPOINTS.services[service]}/chaos/${chaosType}?duration_seconds=${durationSeconds}`;
+  // Fleet-wide: the decision-engine broadcasts to every replica via pods/exec,
+  // so the spike is always picked up by Prometheus (it no longer depends on
+  // which single pod the NodePort round-robins to).
+  const url = `${ENDPOINTS.decisionEngine}/chaos/${service}/${chaosType}?duration_seconds=${durationSeconds}`;
   return safeFetch(url, { method: "POST" });
 }
 
 export function stopChaos(service) {
-  return safeFetch(`${ENDPOINTS.services[service]}/chaos/stop`, { method: "POST" });
+  return safeFetch(`${ENDPOINTS.decisionEngine}/chaos/stop/${service}`, { method: "POST" });
 }
 
 export function manualRemediate(service) {

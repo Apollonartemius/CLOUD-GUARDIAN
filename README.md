@@ -112,6 +112,8 @@ curl -X POST "http://localhost:8002/chaos/cpu_spike?duration_seconds=90"
 
 The dashboard shows the spike, anomaly detection fires, the engine restarts the pod, and recovery is verified — all automatically.
 
+> **Tip:** the dashboard's *Failure Injection* panel uses fleet-wide chaos (fans out to every replica through the decision-engine), so the spike is always captured by Prometheus. Direct NodePort curl, as above, still works.
+
 ---
 
 ## Service Endpoints
@@ -158,21 +160,32 @@ cloudguardian-ai/
 
 ## Chaos Testing
 
+Use the **Failure Injection** panel in the dashboard, or broadcast fleet-wide
+through the decision-engine (the recommended API — it spikes every replica, so
+the anomaly detector always sees it):
+
 ```bash
-# CPU spike
-curl -X POST "http://localhost:8002/chaos/cpu_spike?duration_seconds=90"
+# Get an operator token
+TOKEN=$(curl -s -X POST http://localhost:8030/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@cloudguardian.ai","password":"<VAULT_ADMIN_PASSWORD>"}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
 
-# Memory leak
-curl -X POST "http://localhost:8001/chaos/memory_leak?duration_seconds=120"
+# CPU spike  -> decision-engine broadcasts to every replica (payment-service)
+curl -X POST "http://localhost:8030/chaos/payment-service/cpu_spike?duration_seconds=90" \
+  -H "Authorization: Bearer $TOKEN"
 
-# Latency spike
-curl -X POST "http://localhost:8003/chaos/latency_spike?duration_seconds=60"
-
-# Error storm
-curl -X POST "http://localhost:8002/chaos/error_storm?duration_seconds=60"
+# Memory leak / latency spike / error storm
+curl -X POST "http://localhost:8030/chaos/auth-service/memory_leak?duration_seconds=120" \
+  -H "Authorization: Bearer $TOKEN"
+curl -X POST "http://localhost:8030/chaos/inventory-service/latency_spike?duration_seconds=60" \
+  -H "Authorization: Bearer $TOKEN"
+curl -X POST "http://localhost:8030/chaos/auth-service/error_storm?duration_seconds=60" \
+  -H "Authorization: Bearer $TOKEN"
 
 # Stop early
-curl -X POST "http://localhost:8002/chaos/stop"
+curl -X POST "http://localhost:8030/chaos/stop/inventory-service" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 Or use the guided demo: `bash scripts/demo.sh`

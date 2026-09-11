@@ -9,6 +9,7 @@ COPY auth.py .
 COPY logutil.py .
 COPY vault_client.py .
 COPY k8s_remediator.py .
+COPY chaos_broadcast.py .
 COPY cloud_remediator.py .
 COPY render_remediator.py .
 COPY cloud_run_remediator.py .

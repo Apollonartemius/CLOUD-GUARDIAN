@@ -45,6 +45,7 @@ from datetime import datetime, timedelta, timezone
 
 import api_versioning
 import auth
+import chaos_broadcast
 import cloud_remediator
 import db_utils
 import oidc
@@ -132,7 +133,7 @@ app.add_middleware(
 auth.install_auth(
     app,
     public_paths=("/health", "/metrics", "/auth/login", "/auth/refresh", "/auth/oidc/login", "/auth/oidc/callback", "/alert/hook"),
-    operator_only_paths=("/remediate",),
+    operator_only_paths=("/remediate", "/chaos"),
 )
 rate_limit.install_rate_limit(app)
 
@@ -902,6 +903,41 @@ def manual_remediate(service: str):
     cur.close()
     conn.close()
     return {"incident_id": incident_id, "success": success, "message": message}
+
+
+@app.post("/chaos/stop/{service}")
+def broadcast_stop(service: str):
+    if service not in SERVICES:
+        raise HTTPException(status_code=404, detail=f"unknown service '{service}'")
+    try:
+        return chaos_broadcast.broadcast_stop(service)
+    except Exception as e:  # noqa: BLE001
+        log_error(logger, "chaos_stop_broadcast_failed", service=service, error=str(e))
+        raise HTTPException(status_code=502, detail=f"stop broadcast failed: {e}") from e
+
+
+@app.post("/chaos/{service}/{chaos_type}")
+def broadcast_chaos(
+    service: str,
+    chaos_type: str,
+    duration_seconds: int = Query(60, ge=1, le=600),
+    leak_mb_per_tick: float = Query(0, ge=0),
+    ramp_per_tick: float = Query(0, ge=0),
+):
+    """Fleet-wide chaos: inject a synthetic failure into EVERY replica of the
+    service at once (via `pods/exec`), so the spike is always visible in
+    Prometheus no matter which pod its scrape connection is pinned to."""
+    if service not in SERVICES:
+        raise HTTPException(status_code=404, detail=f"unknown service '{service}'")
+    try:
+        return chaos_broadcast.broadcast_chaos(
+            service, chaos_type, duration_seconds, leak_mb_per_tick, ramp_per_tick
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        log_error(logger, "chaos_broadcast_failed", service=service, chaos_type=chaos_type, error=str(e))
+        raise HTTPException(status_code=502, detail=f"broadcast failed: {e}") from e
 
 
 @app.post("/alert/hook")
