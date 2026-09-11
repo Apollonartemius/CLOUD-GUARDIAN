@@ -1,10 +1,8 @@
 {
   "name": "CloudGuardian AI - Codespaces",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
-  "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
-  },
   "postCreateCommand": "bash .devcontainer/postCreate.sh",
+  "waitFor": "postCreateCommand",
   "forwardPorts": [3001, 8010, 8020, 8030, 8040, 8050, 8001, 8002, 8003, 9090, 9093, 3000],
   "portsAttributes": {
     "3001": { "label": "Mission Control (Dashboard)", "onAutoForward": "openBrowser" },
