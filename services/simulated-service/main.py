@@ -68,9 +68,12 @@ CORS_ORIGINS = [
     if o.strip()
 ]
 
+CORS_ALLOW_ORIGIN_REGEX = os.getenv("CORS_ALLOW_ORIGIN_REGEX", r"https://[a-zA-Z0-9][a-zA-Z0-9-]*-[0-9]+\.(?:preview\.)?app\.github\.dev")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,  # dashboard calls this directly from the browser
+    allow_origin_regex=CORS_ALLOW_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
