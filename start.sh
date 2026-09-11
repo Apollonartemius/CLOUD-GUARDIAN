@@ -46,6 +46,28 @@ fi
 
 echo ""
 echo "[4/4] Starting the monitoring platform (docker-compose)..."
+# The gitignored secret files don't exist on a fresh clone - self-provision
+# demo defaults (only when missing, so real secrets are never overwritten).
+if [ ! -f .env ]; then
+  echo "  -> creating default .env (set real secrets here if needed)"
+  cat > .env <<EOF
+VAULT_SECRETS_SOURCE=${VAULT_SECRETS_SOURCE:-/tmp/opencode/vault-secrets.env}
+OIDC_ENABLED=false
+OIDC_PROVIDER=github
+OIDC_CLIENT_ID=
+OIDC_CLIENT_SECRET=
+ALERT_HOOK_SECRET=$(openssl rand -hex 16)
+EOF
+fi
+if [ ! -f monitoring/vault/vault-secrets.env ]; then
+  echo "  -> creating default monitoring/vault/vault-secrets.env (demo admin creds)"
+  mkdir -p monitoring/vault
+  cat > monitoring/vault/vault-secrets.env <<EOF
+JWT_SECRET=$(openssl rand -hex 24)
+ADMIN_EMAIL=admin@cloudguardian.ai
+ADMIN_PASSWORD=Mhk8z1QVRrWK1NxtoSUYmAZe
+EOF
+fi
 # /tmp is RAM-backed and emptied on every reboot - restore the vault secrets
 # file from the repo copy if it's missing, or compose can't mount it.
 : "${VAULT_SECRETS_SOURCE:=/tmp/opencode/vault-secrets.env}"
