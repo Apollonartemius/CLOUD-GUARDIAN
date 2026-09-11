@@ -111,7 +111,6 @@ docker network inspect cloudguardian-net >/dev/null 2>&1 || docker network creat
 # (b) create the k3d fleet cluster
 k3d cluster create cloudguardian \
   --port "8001-8003:30001-30003@server:0" \
-  --k3s-arg "--disable=traefik@server:0" \
   -v /etc/ssl/certs:/etc/ssl/certs
 
 # (c) import the image + deploy the fleet manifests

@@ -41,8 +41,7 @@ if ! k3d cluster list | grep -q cloudguardian; then
   # Network name must stay k3d-cloudguardian: docker-compose attaches the
   # monitoring services to it to reach the fleet pods.
   k3d cluster create cloudguardian \
-    --port "8001-8003:30001-30003@server:0" \
-    --k3s-arg "--disable=traefik@server:0"
+    --port "8001-8003:30001-30003@server:0"
 fi
 
 echo "[4/6] Shipping the sim image into the cluster + wiring kubectl..."

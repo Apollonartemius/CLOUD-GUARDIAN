@@ -63,8 +63,7 @@ docker network inspect cloudguardian-net >/dev/null 2>&1 || docker network creat
 say "[5/7] Create k3d fleet + deploy manifests"
 if ! k3d cluster list | grep -q cloudguardian; then
   k3d cluster create cloudguardian \
-    --port "8001-8003:30001-30003@server:0" \
-    --k3s-arg "--disable=traefik@server:0"
+    --port "8001-8003:30001-30003@server:0"
 fi
 k3d image import cloudguardian-ai-simulated-service:latest -c cloudguardian
 k3d kubeconfig get cloudguardian > .kube/config
