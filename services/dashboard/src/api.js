@@ -1,34 +1,19 @@
-// All ports are published straight to localhost by docker-compose, so the
-// browser can hit them directly - no proxy needed. For a remote deployment
-// override the base host at build time (Vite): e.g.
-//   VITE_BACKEND_HOST=https://cloudguardian.example.io docker build ...
-// In a GitHub Codespace each forwarded port is exposed as its own subdomain
-// (<codespace>-<port>.app.github.dev), so each service origin is derived from
-// the dashboard's own forwarded hostname.
-
-const envHost = import.meta.env.VITE_BACKEND_HOST;
-
-function baseFor(port) {
-  const h = window.location.hostname;
-  if (envHost) {
-    return `${envHost}:${port}`;
-  }
-  if (/-\d+\.(preview\.)?app\.github\.dev$/.test(h)) {
-    return `https://${h.replace(/-\d+(\.(preview\.)?app\.github\.dev)$/, `-${port}$1`)}`;
-  }
-  return `http://${h}:${port}`;
-}
+// All backends are reached through the SAME origin as the dashboard via the
+// nginx reverse proxy (services/dashboard/nginx.conf): /api/<service>/ maps to
+// each backend's root. Same-origin requests mean no CORS and no preflight,
+// which is required behind tunneling proxies (GitHub Codespaces) and works
+// identically on localhost and the Oracle VM.
 
 export const ENDPOINTS = {
-  metricsCollector: baseFor(8010),
-  anomalyDetector: baseFor(8020),
-  decisionEngine: baseFor(8030),
-  forecastEngine: baseFor(8040),
-  aiAgent: baseFor(8050),
+  metricsCollector: "/api/metrics",
+  anomalyDetector: "/api/anomaly",
+  decisionEngine: "/api/decision",
+  forecastEngine: "/api/forecast",
+  aiAgent: "/api/ai",
   services: {
-    "auth-service": baseFor(8001),
-    "payment-service": baseFor(8002),
-    "inventory-service": baseFor(8003),
+    "auth-service": "/api/fleet/auth",
+    "payment-service": "/api/fleet/payment",
+    "inventory-service": "/api/fleet/inventory",
   },
 };
 
