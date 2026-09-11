@@ -1,20 +1,22 @@
 // All ports are published straight to localhost by docker-compose, so the
-// browser (running on the user's machine) can hit them directly - no proxy
-// needed. If you ever deploy this somewhere other than localhost, change
-// these to real hostnames.
+// browser can hit them directly - no proxy needed. For a remote deployment
+// override the base host at build time (Vite): e.g.
+//   VITE_BACKEND_HOST=https://cloudguardian.example.io docker build ...
+// Each backend keeps its fixed port (8010-8050 / fleet 8001-8003).
 
-const HOST = window.location.hostname;
+const HOST =
+  import.meta.env.VITE_BACKEND_HOST || `http://${window.location.hostname}`;
 
 export const ENDPOINTS = {
-  metricsCollector: `http://${HOST}:8010`,
-  anomalyDetector: `http://${HOST}:8020`,
-  decisionEngine: `http://${HOST}:8030`,
-  forecastEngine: `http://${HOST}:8040`,
-  aiAgent: `http://${HOST}:8050`,
+  metricsCollector: `${HOST}:8010`,
+  anomalyDetector: `${HOST}:8020`,
+  decisionEngine: `${HOST}:8030`,
+  forecastEngine: `${HOST}:8040`,
+  aiAgent: `${HOST}:8050`,
   services: {
-    "auth-service": `http://${HOST}:8001`,
-    "payment-service": `http://${HOST}:8002`,
-    "inventory-service": `http://${HOST}:8003`,
+    "auth-service": `${HOST}:8001`,
+    "payment-service": `${HOST}:8002`,
+    "inventory-service": `${HOST}:8003`,
   },
 };
 

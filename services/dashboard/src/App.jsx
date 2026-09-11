@@ -11,12 +11,7 @@ import LoginScreen from "./components/LoginScreen";
 import { ShieldCheck } from "lucide-react";
 import { fetchMetricHistory, fetchCurrentAnomalies, fetchCurrentIncidents, ensureSession } from "./api";
 import "./App.css";
-
-const SERVICES = [
-  { id: "auth-service", displayName: "Auth Service" },
-  { id: "payment-service", displayName: "Payment Service" },
-  { id: "inventory-service", displayName: "Inventory Service" },
-];
+import { SERVICES } from "./config";
 
 const POLL_INTERVAL_MS = 3000;
 

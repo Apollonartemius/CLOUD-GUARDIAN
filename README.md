@@ -60,7 +60,7 @@ CloudGuardian AI watches a fleet of microservices, detects when something goes w
 | Layer | Tools |
 |---|---|
 | **Compute** | Docker, k3d (k3s), Kubernetes HPA |
-| **Backend** | Python 3.11, FastAPI, SQLAlchemy |
+| **Backend** | Python 3.11, FastAPI, psycopg2 (raw SQL + Alembic migrations) |
 | **Frontend** | React, Vite, nginx |
 | **Database** | PostgreSQL (primary + read replica + WAL backup) |
 | **Observability** | Prometheus, Grafana, Loki, Tempo, OpenTelemetry |

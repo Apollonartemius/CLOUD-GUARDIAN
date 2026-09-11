@@ -22,7 +22,7 @@ def _seed_test_secrets():
         "JWT_PREVIOUS_SECRETS": "dummy-jwt-previous",
         "ADMIN_EMAIL": "ci@cloudguardian.local",
         "ADMIN_PASSWORD": "ci-dummy-password",
-        "ALERT_CHANNEL": "ci",
+"ALERT_CHANNEL": "ci",
         "ALERT_WEBHOOK_URL": "http://localhost:9/hook",
         "ALERT_HOOK_SECRET": "ci-hook-secret",
         "RENDER_API_KEY": "ci-render-key",

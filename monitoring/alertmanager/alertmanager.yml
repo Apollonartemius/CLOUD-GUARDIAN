@@ -7,8 +7,10 @@
 # webhook (ALERT_WEBHOOK_URL) that incident alerts use, so the system can
 # actually get to a human - email, Slack, or any webhook.
 #
-# The basic_auth password MUST match ALERT_HOOK_SECRET on the
-# decision-engine service (default "cloudguardian-hook").
+# The basic_auth password is injected at container start by the compose
+# command (sed swap of 619408c8d937dbb7e718fbfb3dcba2e8e43c6b71 from $ALERT_HOOK_SECRET) and
+# MUST match ALERT_HOOK_SECRET on the decision-engine. Set it in .env -
+# no baked-in default, no secret ever committed.
 # ---------------------------------------------------------------
 route:
   receiver: cloudguardian-hook
@@ -25,4 +27,4 @@ receivers:
         http_config:
           basic_auth:
             username: cloudguardian
-            password: cloudguardian-hook
+            password: 619408c8d937dbb7e718fbfb3dcba2e8e43c6b71

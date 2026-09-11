@@ -81,12 +81,15 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.28.1
     container_name: alertmanager
+    environment:
+      ALERT_HOOK_SECRET: ${ALERT_HOOK_SECRET:?set ALERT_HOOK_SECRET in .env}
+    entrypoint:
+      - "sh"
+      - "-c"
     command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
-      - "--storage.path=/alertmanager"
-      - "--web.external-url=http://localhost:9093"
+      - "sed -e 's/__ALERT_HOOK_SECRET__/'\"$ALERT_HOOK_SECRET\"'/g' /etc/alertmanager/alertmanager.yml > /tmp/am.yml && cat /tmp/am.yml > /etc/alertmanager/alertmanager.yml && exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager --web.external-url=http://localhost:9093"
     volumes:
-      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     ports:
       - "9093:9093"
     networks:
@@ -230,6 +233,7 @@ services:
       FORECAST_BREACH_CONFIDENCE_THRESHOLD: 0.8
       FORECAST_COOLDOWN_SECONDS: 300
       AI_AGENT_URL: http://ai-reasoning-agent:8000
+      ALERT_HOOK_SECRET: ${ALERT_HOOK_SECRET:?set ALERT_HOOK_SECRET in .env}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
       # OIDC SSO (Phase 9) - set these in .env to enable operator SSO.

@@ -1,14 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { TrendingUp, AlertTriangle } from "lucide-react";
 import { fetchForecast, fetchBreachRisks, fetchMetricHistory } from "../api";
-
-const SERVICES = ["auth-service", "payment-service", "inventory-service"];
-const METRICS = [
-  { id: "cpu_percent", label: "CPU %", unit: "%", threshold: 85 },
-  { id: "memory_mb", label: "Memory MB", unit: "MB", threshold: 800 },
-  { id: "latency_ms", label: "Latency ms", unit: "ms", threshold: 400 },
-  { id: "error_rate", label: "Error rate", unit: "", threshold: 0.15 },
-];
+import { SERVICES, FORECAST_METRICS } from "../config";
 
 const WIDTH = 760;
 const HEIGHT = 270;
@@ -47,13 +40,13 @@ function formatTick(v, unit) {
 }
 
 export default function ForecastPanel() {
-  const [service, setService] = useState(SERVICES[0]);
+  const [service, setService] = useState(SERVICES[0].id);
   const [metricId, setMetricId] = useState("latency_ms");
   const [forecast, setForecast] = useState(null);
   const [history, setHistory] = useState([]);
   const [risks, setRisks] = useState([]);
 
-  const metric = METRICS.find((m) => m.id === metricId);
+  const metric = FORECAST_METRICS.find((m) => m.id === metricId);
 
   useEffect(() => {
     let active = true;
@@ -149,13 +142,13 @@ export default function ForecastPanel() {
       <div className="forecast-controls">
         <select value={service} onChange={(e) => setService(e.target.value)}>
           {SERVICES.map((s) => (
-            <option key={s} value={s}>
-              {formatServiceName(s)}
+            <option key={s.id} value={s.id}>
+              {formatServiceName(s.id)}
             </option>
           ))}
         </select>
         <select value={metricId} onChange={(e) => setMetricId(e.target.value)}>
-          {METRICS.map((m) => (
+          {FORECAST_METRICS.map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
             </option>

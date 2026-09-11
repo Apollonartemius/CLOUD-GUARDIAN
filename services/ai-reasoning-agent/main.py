@@ -49,8 +49,6 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 METRICS_WINDOW = int(os.getenv("AGENT_METRICS_WINDOW_MINUTES", 30))
 SERVICE_TOKEN = auth.create_token(subject="ai-reasoning-agent", role="service")
 
-SERVICES = ["auth-service", "payment-service", "inventory-service"]
-
 app = FastAPI(title="ai-reasoning-agent")
 # Only the dashboard (and a handful of dev origins) may call these APIs from
 # a browser. Override with CORS_ORIGINS="http://a,http://b" if you run the
@@ -164,7 +162,7 @@ def load_anomalies(service: str, minutes: int = 60):
     return rows
 
 
-def load_recent_incidents(service: str, limit: int = 5):
+def load_recent_incidents(service: str, exclude_id: int = -1, limit: int = 5):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute(
@@ -175,7 +173,7 @@ def load_recent_incidents(service: str, limit: int = 5):
         WHERE service_name = %s AND id != %s
         ORDER BY action_started_at DESC LIMIT %s
         """,
-        (service, -1, limit),
+        (service, exclude_id, limit),
     )
     rows = cur.fetchall()
     cur.close()
@@ -219,7 +217,7 @@ def build_incident_context(incident_id: int, service: str):
         return None
     timeline = load_metric_timeline(service)
     anomalies = load_anomalies(service)
-    recent = load_recent_incidents(service)
+    recent = load_recent_incidents(service, exclude_id=incident_id)
     risks = load_breach_risks()
     return {
         "incident": incident,

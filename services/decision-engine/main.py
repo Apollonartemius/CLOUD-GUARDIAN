@@ -96,7 +96,7 @@ ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "")
 ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "cloudguardian")
 # Shared secret protecting the Alertmanager -> decision-engine webhook hook.
 # Alertmanager sends it as HTTP Basic auth (user "cloudguardian").
-ALERT_HOOK_SECRET = os.getenv("ALERT_HOOK_SECRET", "cloudguardian-hook")
+ALERT_HOOK_SECRET = os.getenv("ALERT_HOOK_SECRET")
 
 # Services this engine watches and can remediate. The local k3d fleet
 # defaults to the three simulated services; add a cloud job name (e.g.
