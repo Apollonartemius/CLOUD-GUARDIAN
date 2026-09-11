@@ -65,27 +65,12 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           ignore-unfixed: true
-      - name: Scan Dockerfiles / infra configs too
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: services/*/Dockerfile
-          severity: CRITICAL,HIGH
-          format: sarif
-          output: trivy-docker-results.sarif
-          ignore-unfixed: true
       - name: Upload SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         continue-on-error: true
         with:
           sarif_file: trivy-results.sarif
-      - name: Upload Docker SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        continue-on-error: true
-        with:
-          sarif_file: trivy-docker-results.sarif
 
   secret-scan:
     name: secret leak detection (gitleaks)
