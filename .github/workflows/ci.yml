@@ -19,7 +19,9 @@ jobs:
       - name: Install Python deps
         run: |
           pip install --upgrade pip
-          pip install ruff pytest statsmodels pandas numpy prometheus-client psycopg2-binary scikit-learn
+          awk 'FNR==1 && NR>1 {print "\n"} {print}' services/*/requirements.txt > /tmp/cloudguardian-requirements.txt
+          pip install -r /tmp/cloudguardian-requirements.txt
+          pip install ruff pytest numpy pandas PyYAML python-dateutil
 
       - name: Ruff lint
         run: ruff check services/ tests/ conftest.py
