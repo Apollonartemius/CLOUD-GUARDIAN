@@ -38,6 +38,11 @@ logger = get_logger("metrics-collector")
 
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", 15))
+# Window (s) across which each reading aggregates recent scrapes. The fleet is
+# scraped through a single round-robin NodePort, so a bare instant value only
+# reflects ONE pod at a time; a window max/avg flattens that so a chaos spike
+# on any single replica is recorded in full.
+AGG_WINDOW_SECONDS = int(os.getenv("AGG_WINDOW_SECONDS", 30))
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian",
@@ -139,17 +144,36 @@ _state_lock = threading.Lock()
 
 
 def _poll_once():
-    cpu = prom_instant_query("service_cpu_usage_percent")
-    mem = prom_instant_query("service_memory_usage_mb")
+    # Windowed aggregation over the RECENT SCRAPES. The fleet is scraped
+    # through one NodePort, so each 5s scrape samples ONE pod (the
+    # LoadBalancer round-robins). max_over_time[WINDOW] flattens that - a
+    # chaos spike on a single replica always shows up as the window max, even
+    # when the poll instant randomly hits the idle pod. (A bare instant
+    # vector - or a `max by (service)` over one series - silently stored the
+    # idle pod ~half the time and starved the anomaly detector.)
+    cpu = prom_instant_query(
+        f"max_over_time(service_cpu_usage_percent[{AGG_WINDOW_SECONDS}s])"
+    )
+    mem = prom_instant_query(
+        f"max_over_time(service_memory_usage_mb[{AGG_WINDOW_SECONDS}s])"
+    )
     # average latency: real calls sleep the injected latency, so the histogram
-    # mean reflects the actual request-path latency a user experiences
+    # mean reflects the actual request-path latency a user experiences. The
+    # ratio is itself averaged over the window via a PromQL SUBQUERY
+    # ([window:step]), because avg_over_time needs a range vector - you
+    # cannot bracket a binary expression directly.
     latency = prom_instant_query(
-        "rate(service_request_latency_ms_sum[1m]) / rate(service_request_latency_ms_count[1m])"
+        "avg_over_time("
+        "(rate(service_request_latency_ms_sum[1m])"
+        " / rate(service_request_latency_ms_count[1m]))"
+        f"[{AGG_WINDOW_SECONDS}s:{POLL_INTERVAL_SECONDS}s])"
     )
     # error_rate: gauge emitted by the service = real probability of a 5xx
     # (kept as a stable value rather than error/s so the detector's
     # baseline/z-score never sees artificial noise from idle vs. traffic)
-    errors = prom_instant_query("service_error_rate")
+    errors = prom_instant_query(
+        f"max_over_time(service_error_rate[{AGG_WINDOW_SECONDS}s])"
+    )
 
     now = datetime.now(timezone.utc)
     conn = get_connection()

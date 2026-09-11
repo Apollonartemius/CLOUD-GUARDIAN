@@ -38,8 +38,37 @@ export function setRefreshToken(token) {
   else localStorage.removeItem(REFRESH_KEY);
 }
 
+export function decodeToken(token) {
+  if (!token) return null;
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(b64));
+  } catch {
+    return null;
+  }
+}
+
+export function isTokenExpired(token) {
+  const payload = decodeToken(token);
+  if (!payload || !Number.isFinite(payload.exp)) return true;
+  return Date.now() / 1000 >= payload.exp;
+}
+
 export function isLoggedIn() {
   return Boolean(getToken());
+}
+
+// On app bootstrap: stale/expired sessions must land on the login screen
+// instead of a half-broken dashboard. Only a server-valid token passes.
+export async function ensureSession() {
+  const token = getToken();
+  if (!token) return false;
+  if (!isTokenExpired(token)) return true;
+  if (await refreshTokens()) return true;
+  logout();
+  return false;
 }
 
 export function logout() {

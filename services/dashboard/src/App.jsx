@@ -8,7 +8,8 @@ import ForecastPanel from "./components/ForecastPanel";
 import AICopilot from "./components/AICopilot";
 import IncidentDetailModal from "./components/IncidentDetailModal";
 import LoginScreen from "./components/LoginScreen";
-import { fetchMetricHistory, fetchCurrentAnomalies, fetchCurrentIncidents, isLoggedIn } from "./api";
+import { ShieldCheck } from "lucide-react";
+import { fetchMetricHistory, fetchCurrentAnomalies, fetchCurrentIncidents, ensureSession } from "./api";
 import "./App.css";
 
 const SERVICES = [
@@ -39,12 +40,24 @@ function deriveStatus(serviceId, anomalies, incidents) {
 }
 
 export default function App() {
-  const [authed, setAuthed] = useState(isLoggedIn());
+  const [authState, setAuthState] = useState("resolving");
   const [metricsByService, setMetricsByService] = useState({});
   const [anomalies, setAnomalies] = useState([]);
   const [incidents, setIncidents] = useState([]);
   const [clock, setClock] = useState(new Date().toLocaleTimeString());
   const [selectedIncident, setSelectedIncident] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    ensureSession().then((ok) => {
+      if (mounted) setAuthState(ok ? "authed" : "anon");
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const authed = authState === "authed";
 
   useEffect(() => {
     if (!authed) return undefined;
@@ -76,8 +89,20 @@ export default function App() {
     return () => clearInterval(clockInterval);
   }, []);
 
+  if (authState === "resolving") {
+    return (
+      <div className="app app--booting">
+        <div className="login-card">
+          <div className="login-card__mark"><ShieldCheck size={22} strokeWidth={2.2} /></div>
+          <h1 className="login-card__title">CloudGuardian AI</h1>
+          <p className="login-card__subtitle">Restoring session&hellip;</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!authed) {
-    return <LoginScreen onSuccess={() => setAuthed(true)} />;
+    return <LoginScreen onSuccess={() => setAuthState("authed")} />;
   }
 
   const statuses = SERVICES.map((s) => deriveStatus(s.id, anomalies, incidents));

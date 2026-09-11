@@ -439,6 +439,15 @@ curl.exe "http://localhost:8020/anomalies/current?minutes=5"
   during a demo — but if you leave it untouched for a while, the first
   request afterward will be slow. Worth remembering if you're demoing
   live.
+- **The fleet is scraped through one round-robin NodePort.** Because the
+  LoadBalancer routes each scrape to a *single* pod, a chaos spike on one
+  of two replicas would be invisible to a bare instant vector. The
+  collector therefore aggregates each reading over a recent window
+  (`max_over_time(cpu/mem/error[30s])` and an `avg_over_time` subquery
+  for latency), so a one-replica burn is always recorded in full and the
+  anomaly detector / incidents fire reliably. Live proof: a 90s
+  `cpu_spike` on payment hit `db_cpu=100` → incident → `k8s_rollout_restart`
+  → `resolved` in ~50s.
 
 ---
 

@@ -52,6 +52,31 @@ def test_poll_writes_three_readings(load, monkeypatch, fake_conn):
     assert fake_conn.commits >= 1
 
 
+def test_poll_aggregates_over_recent_window(load, monkeypatch, fake_conn):
+    # the fleet is scraped through one round-robin NodePort (one pod per
+    # scrape), so readings must aggregate over a recent window - otherwise a
+    # chaos spike on one of two replicas only lands in the DB ~half the time.
+    mc = load("metrics-collector")
+    services = {"auth-service", "payment-service", "inventory-service"}
+    seen = []
+
+    def capture(q):
+        seen.append(q)
+        return {s: 20.0 for s in services}
+
+    monkeypatch.setattr(mc, "prom_instant_query", capture)
+    monkeypatch.setattr(mc, "get_connection", lambda: fake_conn)
+
+    mc._poll_once()
+
+    joined = " ".join(seen)
+    assert f"max_over_time(service_cpu_usage_percent[{mc.AGG_WINDOW_SECONDS}s])" in joined
+    assert f"max_over_time(service_memory_usage_mb[{mc.AGG_WINDOW_SECONDS}s])" in joined
+    sub = f"[{mc.AGG_WINDOW_SECONDS}s:{mc.POLL_INTERVAL_SECONDS}s])"
+    assert "avg_over_time((rate(" in joined and sub in joined
+    assert f"max_over_time(service_error_rate[{mc.AGG_WINDOW_SECONDS}s])" in joined
+
+
 def test_poll_detects_ingestion_gap(load, monkeypatch, fake_conn):
     from datetime import datetime, timedelta, timezone
 
