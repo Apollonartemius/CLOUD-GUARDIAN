@@ -21,9 +21,29 @@ function Reading({ label, value, unit }) {
   );
 }
 
-export default function ServiceVitalCard({ name, displayName, latest, latencyTrend, status }) {
+export default function ServiceVitalCard({
+  name,
+  displayName,
+  latest,
+  latencyTrend,
+  cpuTrend,
+  memTrend,
+  status,
+}) {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.nominal;
   const Icon = config.icon;
+
+  function trendRow(label, values) {
+    const safe = values && values.length > 1 ? values : [0, 0];
+    return (
+      <div className="vital-card__trend">
+        <span className="vital-card__trend-label">{label}</span>
+        <div className="vital-card__trend-chart">
+          <PulseLine values={safe} status={status} width={200} height={36} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`vital-card ${config.className}`}>
@@ -39,7 +59,12 @@ export default function ServiceVitalCard({ name, displayName, latest, latencyTre
       </div>
 
       <div className="vital-card__pulse">
-        <PulseLine values={latencyTrend} status={status} />
+        <PulseLine values={latencyTrend && latencyTrend.length > 1 ? latencyTrend : [0, 0]} status={status} />
+      </div>
+
+      <div className="vital-card__trends">
+        {trendRow("CPU %", cpuTrend)}
+        {trendRow("MEM MB", memTrend)}
       </div>
 
       <div className="vital-card__readings">

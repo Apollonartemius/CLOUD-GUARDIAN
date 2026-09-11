@@ -1,4 +1,5 @@
-import { ShieldCheck } from "lucide-react";
+import { LogOut, ShieldCheck } from "lucide-react";
+import { logout } from "../api";
 
 export default function TopBar({ nominalCount, totalCount, clock }) {
   const allNominal = nominalCount === totalCount;
@@ -21,6 +22,10 @@ export default function TopBar({ nominalCount, totalCount, clock }) {
           {nominalCount} / {totalCount} services nominal
         </div>
         <div className="top-bar__clock">{clock}</div>
+        <button className="top-bar__logout" onClick={logout} title="Sign out and clear this session">
+          <LogOut size={14} />
+          Sign out
+        </button>
       </div>
     </header>
   );

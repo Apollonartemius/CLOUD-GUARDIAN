@@ -117,6 +117,8 @@ export default function App() {
           const readings = metricsByService[service.id] || [];
           const latest = readings[readings.length - 1];
           const latencyTrend = readings.map((r) => r.latency_ms).filter((v) => v !== null && v !== undefined);
+          const cpuTrend = readings.map((r) => r.cpu_percent).filter((v) => v !== null && v !== undefined);
+          const memTrend = readings.map((r) => r.memory_mb).filter((v) => v !== null && v !== undefined);
           return (
             <ServiceVitalCard
               key={service.id}
@@ -124,6 +126,8 @@ export default function App() {
               displayName={service.displayName}
               latest={latest}
               latencyTrend={latencyTrend.length > 1 ? latencyTrend : [0, 0]}
+              cpuTrend={cpuTrend.length > 1 ? cpuTrend : [0, 0]}
+              memTrend={memTrend.length > 1 ? memTrend : [0, 0]}
               status={statuses[i]}
             />
           );

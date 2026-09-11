@@ -59,6 +59,26 @@
   text-align: right;
 }
 
+.top-bar__logout {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--fog-300);
+  background: transparent;
+  border: 1px solid var(--line-800);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.top-bar__logout:hover {
+  color: var(--signal-cyan);
+  border-color: var(--signal-cyan);
+}
+
 .fleet-indicator {
   display: flex;
   align-items: center;
@@ -170,6 +190,35 @@
 .vital-card__pulse {
   margin: 10px -2px 12px;
   height: 56px;
+}
+
+.vital-card__trends {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+
+.vital-card__trend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--line-800);
+  border-radius: 6px;
+  background: rgba(10, 15, 24, 0.35);
+}
+
+.vital-card__trend-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--fog-500);
+  min-width: 42px;
+}
+
+.vital-card__trend-chart {
+  flex: 1;
+  min-width: 0;
 }
 
 .pulse-line path {
@@ -688,6 +737,14 @@
   width: 14px;
   height: 0;
   border-top: 1px dashed var(--signal-red);
+  display: inline-block;
+}
+
+.forecast-legend__actual {
+  width: 14px;
+  height: 2px;
+  background: var(--signal-green);
+  border-radius: 1px;
   display: inline-block;
 }
 
