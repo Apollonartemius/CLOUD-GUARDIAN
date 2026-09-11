@@ -51,7 +51,7 @@ echo "[4/4] Starting the monitoring platform (docker-compose)..."
 if [ ! -f .env ]; then
   echo "  -> creating default .env (set real secrets here if needed)"
   cat > .env <<EOF
-VAULT_SECRETS_SOURCE=${VAULT_SECRETS_SOURCE:-/tmp/opencode/vault-secrets.env}
+VAULT_SECRETS_SOURCE=${VAULT_SECRETS_SOURCE:-./monitoring/vault/vault-secrets.env}
 OIDC_ENABLED=false
 OIDC_PROVIDER=github
 OIDC_CLIENT_ID=
