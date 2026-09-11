@@ -1,8 +1,34 @@
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed_test_secrets():
+    """Hermetic default secrets for CI/local runs (fail-closed Vault client).
+
+    Services resolve secrets through vault_client, which falls back to explicit
+    environment variables when VAULT_ADDR is not configured. CI sets only
+    JWT_SECRET, so without these the whole decision-engine suite crashed. Dummy
+    values are fine: every test mocks the network/DB side. Existing env vars are
+    never overwritten, and intentionally-absent vars (GCP_PROJECT_ID & co.) are
+    left alone so fails-closed tests keep working.
+    """
+    defaults = {
+        "JWT_SECRET": "dummy-jwt-for-tests",
+        "JWT_PREVIOUS_SECRETS": "dummy-jwt-previous",
+        "ADMIN_EMAIL": "ci@cloudguardian.local",
+        "ADMIN_PASSWORD": "ci-dummy-password",
+        "ALERT_CHANNEL": "ci",
+        "ALERT_WEBHOOK_URL": "http://localhost:9/hook",
+        "ALERT_HOOK_SECRET": "ci-hook-secret",
+        "RENDER_API_KEY": "ci-render-key",
+    }
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
 
 REPO = Path(__file__).resolve().parent
 
