@@ -24,7 +24,7 @@ echo "[2/4] Preflight: k3d fleet cluster..."
 if ! docker network inspect k3d-cloudguardian >/dev/null 2>&1; then
   echo "  !! k3d network 'k3d-cloudguardian' not found."
   echo "  !! The monitored fleet + chaos engine need k3d. Create it with:"
-  echo "       k3d cluster create cloudguardian \\
+  echo '       k3d cluster create cloudguardian \'
   echo "        -p '8001-8003:30001-30003@server:0'"
   exit 1
 fi
