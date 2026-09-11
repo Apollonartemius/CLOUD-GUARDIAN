@@ -2,21 +2,33 @@
 // browser can hit them directly - no proxy needed. For a remote deployment
 // override the base host at build time (Vite): e.g.
 //   VITE_BACKEND_HOST=https://cloudguardian.example.io docker build ...
-// Each backend keeps its fixed port (8010-8050 / fleet 8001-8003).
+// In a GitHub Codespace each forwarded port is exposed as its own subdomain
+// (<codespace>-<port>.app.github.dev), so each service origin is derived from
+// the dashboard's own forwarded hostname.
 
-const HOST =
-  import.meta.env.VITE_BACKEND_HOST || `http://${window.location.hostname}`;
+const envHost = import.meta.env.VITE_BACKEND_HOST;
+
+function baseFor(port) {
+  const h = window.location.hostname;
+  if (envHost) {
+    return `${envHost}:${port}`;
+  }
+  if (/-\d+\.(preview\.)?app\.github\.dev$/.test(h)) {
+    return `https://${h.replace(/-\d+(\.(preview\.)?app\.github\.dev)$/, `-${port}$1`)}`;
+  }
+  return `http://${h}:${port}`;
+}
 
 export const ENDPOINTS = {
-  metricsCollector: `${HOST}:8010`,
-  anomalyDetector: `${HOST}:8020`,
-  decisionEngine: `${HOST}:8030`,
-  forecastEngine: `${HOST}:8040`,
-  aiAgent: `${HOST}:8050`,
+  metricsCollector: baseFor(8010),
+  anomalyDetector: baseFor(8020),
+  decisionEngine: baseFor(8030),
+  forecastEngine: baseFor(8040),
+  aiAgent: baseFor(8050),
   services: {
-    "auth-service": `${HOST}:8001`,
-    "payment-service": `${HOST}:8002`,
-    "inventory-service": `${HOST}:8003`,
+    "auth-service": baseFor(8001),
+    "payment-service": baseFor(8002),
+    "inventory-service": baseFor(8003),
   },
 };
 
