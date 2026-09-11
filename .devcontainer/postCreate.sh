@@ -7,7 +7,11 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-echo "[1/6] Installing k3d + kubectl (if missing)..."
+echo "[1/6] Installing docker CLI + compose plugin, k3d, kubectl..."
+if ! command -v docker >/dev/null 2>&1; then
+  curl -fsSL https://get.docker.com | sudo sh >/dev/null 2>&1 || \
+    (sudo apt-get update -y && sudo apt-get install -y docker.io docker-compose-v2)
+fi
 if ! command -v k3d >/dev/null 2>&1; then
   curl -s -o /tmp/k3d-install.sh https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh
   bash /tmp/k3d-install.sh
