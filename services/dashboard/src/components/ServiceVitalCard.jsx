@@ -2,12 +2,58 @@ import { Activity, AlertTriangle, CheckCircle2, RotateCw } from "lucide-react";
 import PulseLine from "./PulseLine";
 
 const STATUS_CONFIG = {
-  nominal: { label: "NOMINAL", icon: Activity, className: "status--nominal" },
-  anomaly: { label: "ANOMALY DETECTED", icon: AlertTriangle, className: "status--anomaly" },
-  healing: { label: "HEALING", icon: RotateCw, className: "status--healing" },
-  resolved: { label: "RESOLVED", icon: CheckCircle2, className: "status--resolved" },
-  escalated: { label: "ESCALATED", icon: AlertTriangle, className: "status--escalated" },
+  nominal: { label: "Nominal", icon: Activity, className: "status--nominal" },
+  anomaly: { label: "Anomaly detected", icon: AlertTriangle, className: "status--anomaly" },
+  healing: { label: "Recovering", icon: RotateCw, className: "status--healing" },
+  resolved: { label: "Resolved", icon: CheckCircle2, className: "status--resolved" },
+  escalated: { label: "Escalated", icon: AlertTriangle, className: "status--escalated" },
 };
+
+function summarize(values) {
+  const vals = (values || []).filter((v) => Number.isFinite(v));
+  if (!vals.length) return { min: 0, avg: 0, max: 0 };
+  return {
+    min: Math.min(...vals),
+    avg: vals.reduce((a, b) => a + b, 0) / vals.length,
+    max: Math.max(...vals),
+  };
+}
+
+function formatValue(v, unit, precision = 0) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
+  return `${v.toFixed(precision)}${unit}`;
+}
+
+function ChartBlock({ label, unit, values, status, height = 96, precision = 0 }) {
+  const safe = values && values.length > 1 ? values : [0, 0];
+  const stats = summarize(values);
+  const current = values && values.length ? values[values.length - 1] : null;
+
+  return (
+    <div className="chart-block">
+      <div className="chart-block__head">
+        <span className="chart-block__label">{label}</span>
+        <span className="chart-block__value">
+          {formatValue(current, unit, precision)}
+        </span>
+      </div>
+      <div className="chart-block__plot" style={{ height }}>
+        <PulseLine values={safe} status={status} width={320} height={64} />
+        <span className="chart-block__axis chart-block__axis--top">
+          {formatValue(stats.max, unit, precision)}
+        </span>
+        <span className="chart-block__axis chart-block__axis--bottom">
+          {formatValue(stats.min, unit, precision)}
+        </span>
+      </div>
+      <div className="chart-block__foot">
+        <span>min {formatValue(stats.min, unit, precision)}</span>
+        <span>avg {formatValue(stats.avg, unit, precision)}</span>
+        <span>max {formatValue(stats.max, unit, precision)}</span>
+      </div>
+    </div>
+  );
+}
 
 function Reading({ label, value, unit }) {
   return (
@@ -33,23 +79,11 @@ export default function ServiceVitalCard({
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.nominal;
   const Icon = config.icon;
 
-  function trendRow(label, values) {
-    const safe = values && values.length > 1 ? values : [0, 0];
-    return (
-      <div className="vital-card__trend">
-        <span className="vital-card__trend-label">{label}</span>
-        <div className="vital-card__trend-chart">
-          <PulseLine values={safe} status={status} width={200} height={36} />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className={`vital-card ${config.className}`}>
       <div className="vital-card__header">
         <div>
-          <div className="vital-card__eyebrow">SERVICE</div>
+          <div className="vital-card__eyebrow">Service</div>
           <h3 className="vital-card__name">{displayName}</h3>
         </div>
         <div className={`status-badge ${config.className}`}>
@@ -58,21 +92,40 @@ export default function ServiceVitalCard({
         </div>
       </div>
 
-      <div className="vital-card__pulse">
-        <PulseLine values={latencyTrend && latencyTrend.length > 1 ? latencyTrend : [0, 0]} status={status} />
-      </div>
+      <ChartBlock
+        label="Latency"
+        unit=" ms"
+        values={latencyTrend}
+        status={status}
+        height={110}
+        precision={0}
+      />
 
-      <div className="vital-card__trends">
-        {trendRow("CPU %", cpuTrend)}
-        {trendRow("MEM MB", memTrend)}
+      <div className="chart-block__row">
+        <ChartBlock
+          label="CPU"
+          unit="%"
+          values={cpuTrend}
+          status={status}
+          height={84}
+          precision={1}
+        />
+        <ChartBlock
+          label="Memory"
+          unit=" MB"
+          values={memTrend}
+          status={status}
+          height={84}
+          precision={0}
+        />
       </div>
 
       <div className="vital-card__readings">
         <Reading label="CPU" value={latest?.cpu_percent?.toFixed(1)} unit="%" />
-        <Reading label="MEM" value={latest?.memory_mb?.toFixed(0)} unit="MB" />
-        <Reading label="LATENCY" value={latest?.latency_ms?.toFixed(0)} unit="ms" />
+        <Reading label="Memory" value={latest?.memory_mb?.toFixed(0)} unit="MB" />
+        <Reading label="Latency" value={latest?.latency_ms?.toFixed(0)} unit="ms" />
         <Reading
-          label="ERROR RATE"
+          label="Error rate"
           value={latest?.error_rate !== undefined ? (latest.error_rate * 100).toFixed(1) : null}
           unit="%"
         />

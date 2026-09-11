@@ -162,11 +162,11 @@ export function fetchBreachRisks() {
   return safeFetch(`${ENDPOINTS.forecastEngine}/forecast/breach-risk`);
 }
 
-export function askAgent(question) {
+export function askAgent(question, history = []) {
   return safeFetch(`${ENDPOINTS.aiAgent}/agent/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, history: history.slice(-8) }),
   });
 }
 

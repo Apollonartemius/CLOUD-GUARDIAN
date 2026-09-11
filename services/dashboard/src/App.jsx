@@ -18,7 +18,7 @@ const SERVICES = [
   { id: "inventory-service", displayName: "Inventory Service" },
 ];
 
-const POLL_INTERVAL_MS = 5000;
+const POLL_INTERVAL_MS = 3000;
 
 function deriveStatus(serviceId, anomalies, incidents) {
   const serviceIncidents = incidents.filter((i) => i.service_name === serviceId);
@@ -44,6 +44,7 @@ export default function App() {
   const [metricsByService, setMetricsByService] = useState({});
   const [anomalies, setAnomalies] = useState([]);
   const [incidents, setIncidents] = useState([]);
+  const [lastUpdated, setLastUpdated] = useState(null);
   const [clock, setClock] = useState(new Date().toLocaleTimeString());
   const [selectedIncident, setSelectedIncident] = useState(null);
 
@@ -77,6 +78,7 @@ export default function App() {
       });
       setAnomalies(anomalyData?.anomalies || []);
       setIncidents(incidentData?.incidents || []);
+      setLastUpdated(Date.now());
     }
 
     poll();
@@ -110,41 +112,65 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopBar nominalCount={nominalCount} totalCount={SERVICES.length} clock={clock} />
+      <TopBar nominalCount={nominalCount} totalCount={SERVICES.length} clock={clock} lastUpdated={lastUpdated} />
 
-      <div className="vital-grid">
-        {SERVICES.map((service, i) => {
-          const readings = metricsByService[service.id] || [];
-          const latest = readings[readings.length - 1];
-          const latencyTrend = readings.map((r) => r.latency_ms).filter((v) => v !== null && v !== undefined);
-          const cpuTrend = readings.map((r) => r.cpu_percent).filter((v) => v !== null && v !== undefined);
-          const memTrend = readings.map((r) => r.memory_mb).filter((v) => v !== null && v !== undefined);
-          return (
-            <ServiceVitalCard
-              key={service.id}
-              name={service.id}
-              displayName={service.displayName}
-              latest={latest}
-              latencyTrend={latencyTrend.length > 1 ? latencyTrend : [0, 0]}
-              cpuTrend={cpuTrend.length > 1 ? cpuTrend : [0, 0]}
-              memTrend={memTrend.length > 1 ? memTrend : [0, 0]}
-              status={statuses[i]}
-            />
-          );
-        })}
-      </div>
+      <section className="page-section">
+        <div className="section-head">
+          <h2 className="section-head__title">Service Health</h2>
+          <span className="section-head__meta">CPU &middot; Memory &middot; Latency &middot; Error rate</span>
+        </div>
+        <div className="vital-grid">
+          {SERVICES.map((service, i) => {
+            const readings = metricsByService[service.id] || [];
+            const latest = readings[readings.length - 1];
+            const latencyTrend = readings.map((r) => r.latency_ms).filter((v) => v !== null && v !== undefined);
+            const cpuTrend = readings.map((r) => r.cpu_percent).filter((v) => v !== null && v !== undefined);
+            const memTrend = readings.map((r) => r.memory_mb).filter((v) => v !== null && v !== undefined);
+            return (
+              <ServiceVitalCard
+                key={service.id}
+                name={service.id}
+                displayName={service.displayName}
+                latest={latest}
+                latencyTrend={latencyTrend.length > 1 ? latencyTrend : [0, 0]}
+                cpuTrend={cpuTrend.length > 1 ? cpuTrend : [0, 0]}
+                memTrend={memTrend.length > 1 ? memTrend : [0, 0]}
+                status={statuses[i]}
+              />
+            );
+          })}
+        </div>
+      </section>
 
-      <div className="dashboard-grid">
-        <IncidentTimeline incidents={incidents} onSelect={setSelectedIncident} />
-        <AnomalyFeed anomalies={anomalies} />
-      </div>
+      <section className="page-section">
+        <div className="section-head">
+          <h2 className="section-head__title">Incidents &amp; Anomalies</h2>
+          <span className="section-head__meta">Reactive and predictive detection</span>
+        </div>
+        <div className="dashboard-grid">
+          <IncidentTimeline incidents={incidents} onSelect={setSelectedIncident} />
+          <AnomalyFeed anomalies={anomalies} />
+        </div>
+      </section>
 
-      <div className="phase7-grid">
-        <ForecastPanel />
-        <AICopilot />
-      </div>
+      <section className="page-section">
+        <div className="section-head">
+          <h2 className="section-head__title">Forecast &amp; Insights</h2>
+          <span className="section-head__meta">Predictive analytics and AI copilot</span>
+        </div>
+        <div className="phase7-grid">
+          <ForecastPanel />
+          <AICopilot />
+        </div>
+      </section>
 
-      <ChaosControlPanel />
+      <section className="page-section">
+        <div className="section-head">
+          <h2 className="section-head__title">Failure Injection</h2>
+          <span className="section-head__meta">Chaos engineering on the fleet</span>
+        </div>
+        <ChaosControlPanel />
+      </section>
 
       {selectedIncident && (
         <IncidentDetailModal

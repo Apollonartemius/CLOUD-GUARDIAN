@@ -1,8 +1,9 @@
 import { LogOut, ShieldCheck } from "lucide-react";
 import { logout } from "../api";
 
-export default function TopBar({ nominalCount, totalCount, clock }) {
+export default function TopBar({ nominalCount, totalCount, clock, lastUpdated }) {
   const allNominal = nominalCount === totalCount;
+  const age = lastUpdated ? Math.max(0, Math.round((Date.now() - lastUpdated) / 1000)) : null;
 
   return (
     <header className="top-bar">
@@ -17,6 +18,11 @@ export default function TopBar({ nominalCount, totalCount, clock }) {
       </div>
 
       <div className="top-bar__status">
+        <span className="top-bar__freshness">
+          {lastUpdated !== null
+            ? `Updated ${age}s ago`
+            : "Connecting"}
+        </span>
         <div className={`fleet-indicator ${allNominal ? "fleet-indicator--ok" : "fleet-indicator--degraded"}`}>
           <span className="fleet-indicator__dot" />
           {nominalCount} / {totalCount} services nominal

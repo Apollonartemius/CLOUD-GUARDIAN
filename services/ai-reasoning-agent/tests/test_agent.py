@@ -37,16 +37,31 @@ def test_fallback_report_is_grounded_in_evidence(load):
     assert report["evidence"]
 
 
+FAKE_CONTEXT = {
+    "services": [
+        {
+            "service": "auth-service",
+            "latest": {"cpu_percent": 34.2, "memory_mb": 152, "latency_ms": 61, "error_rate": 0.0},
+            "delta_5m": {"cpu_percent": 1.1, "memory_mb": 3, "latency_ms": -2, "error_rate": 0.0},
+        }
+    ],
+    "incidents": [
+        {
+            "service_name": "auth-service",
+            "incident_type": "reactive",
+            "outcome": "resolved",
+            "action_taken": "docker_restart",
+        }
+    ],
+    "anomalies": [],
+    "breach_risks": [],
+}
+
+
 def test_answer_question_offline_mode(load, monkeypatch):
     agent = load("ai-reasoning-agent")
     monkeypatch.setattr(agent, "ANTHROPIC_API_KEY", None)
-    monkeypatch.setattr(
-        agent,
-        "build_ask_context",
-        lambda: {"incidents": [{"service_name": "auth-service", "incident_type": "reactive",
-                                "outcome": "resolved", "action_taken": "docker_restart"}],
-                 "breach_risks": []},
-    )
+    monkeypatch.setattr(agent, "build_ask_context", lambda: FAKE_CONTEXT)
     out = agent.answer_question("what happened?")
     assert out["mode"] == "offline"
     assert "auth-service" in out["answer"]
@@ -55,34 +70,72 @@ def test_answer_question_offline_mode(load, monkeypatch):
 def test_answer_question_uses_llm_when_key_present(load, monkeypatch):
     agent = load("ai-reasoning-agent")
     monkeypatch.setattr(agent, "ANTHROPIC_API_KEY", "sk-ant-test")
-    monkeypatch.setattr(agent, "build_ask_context", lambda: {"incidents": [], "breach_risks": []})
+    monkeypatch.setattr(agent, "build_ask_context", lambda: FAKE_CONTEXT)
+
+    captured = {}
 
     class FakeMsg:
         content = [type("B", (), {"type": "text", "text": "The system is stable."})()]
 
     class FakeMessages:
         def create(self, **kw):
+            captured.update(kw)
+            return FakeMsg()
+
+        last_kw = {}
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+        messages = FakeMessages()
+
+    import anthropic
+    monkeypatch.setattr(anthropic, "Anthropic", FakeClient)
+    out = agent.answer_question("status?")
+    assert out["mode"] == "llm"
+    assert "stable" in out["answer"]
+    assert captured["system"] == agent.ASK_SYSTEM_PROMPT
+
+
+def test_answer_question_passes_history_to_llm(load, monkeypatch):
+    agent = load("ai-reasoning-agent")
+    monkeypatch.setattr(agent, "ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setattr(agent, "build_ask_context", lambda: FAKE_CONTEXT)
+
+    captured = {}
+
+    class FakeMsg:
+        content = [type("B", (), {"type": "text", "text": "contextual answer"})()]
+
+    class FakeMessages:
+        def create(self, **kw):
+            captured.update(kw)
             return FakeMsg()
 
     class FakeClient:
         def __init__(self, **kw):
             pass
-
         messages = FakeMessages()
 
     import anthropic
-
     monkeypatch.setattr(anthropic, "Anthropic", FakeClient)
-    out = agent.answer_question("status?")
-    assert out["mode"] == "llm"
-    assert "stable" in out["answer"]
+    history = [
+        {"role": "user", "content": "what was that last latency spike?"},
+        {"role": "assistant", "content": "payment-service latency jumped to 600ms"},
+    ]
+    agent.answer_question("what caused it?", history)
+    msgs = captured["messages"]
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"] == "what was that last latency spike?"
+    assert msgs[1]["role"] == "assistant"
+    assert msgs[1]["content"] == "payment-service latency jumped to 600ms"
+    assert "QUESTION: what caused it?" in msgs[2]["content"]
 
 
 def test_llm_failure_falls_back_to_offline(load, monkeypatch):
     agent = load("ai-reasoning-agent")
     monkeypatch.setattr(agent, "ANTHROPIC_API_KEY", "sk-ant-test")
-    monkeypatch.setattr(agent, "build_ask_context", lambda: {"incidents": [], "breach_risks": []})
-
-    monkeypatch.setattr(agent, "call_llm", lambda *a, **k: None)
+    monkeypatch.setattr(agent, "build_ask_context", lambda: FAKE_CONTEXT)
+    monkeypatch.setattr(agent, "call_llm_chat", lambda *a, **k: None)
     out = agent.answer_question("status?")
     assert out["mode"] == "offline"

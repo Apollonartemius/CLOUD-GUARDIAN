@@ -174,7 +174,8 @@ services:
     environment:
       PROMETHEUS_URL: http://prometheus:9090
       DATABASE_URL: postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian
-      POLL_INTERVAL_SECONDS: 10
+      POLL_INTERVAL_SECONDS: 3
+      AGG_WINDOW_SECONDS: 5
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-cloudguardian-root}
     ports:
@@ -262,7 +263,7 @@ services:
     container_name: forecast-engine
     environment:
       DATABASE_URL: postgresql://cloudguardian:cloudguardian@postgres:5432/cloudguardian
-      FORECAST_RETRAIN_INTERVAL_SECONDS: 60
+      FORECAST_RETRAIN_INTERVAL_SECONDS: 30
       FORECAST_WINDOW_MINUTES: 30
       FORECAST_HORIZON_MINUTES: 10
       FORECAST_MIN_POINTS: 8

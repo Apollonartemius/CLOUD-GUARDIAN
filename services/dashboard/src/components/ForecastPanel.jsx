@@ -10,9 +10,22 @@ const METRICS = [
   { id: "error_rate", label: "Error rate", unit: "", threshold: 0.15 },
 ];
 
-const WIDTH = 560;
-const HEIGHT = 150;
-const PAD = { top: 14, right: 10, bottom: 22, left: 34 };
+const WIDTH = 760;
+const HEIGHT = 270;
+const PAD = { top: 20, right: 14, bottom: 30, left: 56 };
+
+function niceTicks(min, max, count = 5) {
+  const span = max - min || 1;
+  const rawStep = span / (count - 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const norm = rawStep / mag;
+  const step = (norm >= 2.5 ? 5 : norm >= 1.5 ? 2 : 1) * mag;
+  const ticks = [];
+  for (let v = Math.floor(min / step) * step; v <= max + step * 0.001; v += step) {
+    ticks.push(+v.toFixed(10));
+  }
+  return ticks;
+}
 
 const HISTORY_MINUTES = 30; // actuals window (same as forecast training window)
 
@@ -24,6 +37,13 @@ function parseActualTime(recordedAt) {
 
 function formatServiceName(id) {
   return id.split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+}
+
+function formatTick(v, unit) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
+  const p = v !== 0 && v < 1 ? 2 : v >= 1000 ? 0 : 1;
+  const s = v.toFixed(p);
+  return `${s}${unit ? " " + unit : ""}`;
 }
 
 export default function ForecastPanel() {
@@ -49,7 +69,7 @@ export default function ForecastPanel() {
       setHistory(hist?.readings || []);
     }
     load();
-    const interval = setInterval(load, 10000);
+    const interval = setInterval(load, 3000);
     return () => {
       active = false;
       clearInterval(interval);
@@ -98,7 +118,7 @@ export default function ForecastPanel() {
 
     const firstBreach = points.find((p) => p.value > metric.threshold);
     const breachIndex = firstBreach ? points.indexOf(firstBreach) : -1;
-    const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => max - f * range);
+    const yTicks = niceTicks(min, max, 5);
     return {
       bandPath,
       linePath,
@@ -154,8 +174,6 @@ export default function ForecastPanel() {
             className="forecast-chart"
             viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
             width="100%"
-            height={HEIGHT}
-            preserveAspectRatio="none"
           >
             {chart.yTicks.map((v, i) => (
               <g key={i}>
@@ -168,8 +186,13 @@ export default function ForecastPanel() {
                   strokeWidth="0.5"
                   strokeDasharray="2 3"
                 />
-                <text x={PAD.left - 6} y={chart.y(v) + 3} textAnchor="end" className="chart-tick">
-                  {v.toFixed(v < 1 ? 2 : 0)}
+                <text
+                  x={PAD.left - 8}
+                  y={chart.y(v) + 3}
+                  textAnchor="end"
+                  className="chart-tick"
+                >
+                  {formatTick(v, metric.unit)}
                 </text>
               </g>
             ))}
@@ -190,6 +213,7 @@ export default function ForecastPanel() {
               className="chart-threshold"
             >
               threshold {metric.threshold}
+              {metric.unit}
             </text>
 
             <path d={chart.bandPath} fill="var(--signal-cyan)" opacity="0.12" />
@@ -206,7 +230,23 @@ export default function ForecastPanel() {
                   strokeLinejoin="round"
                 />
                 {chart.lastActualX !== null && (
-                  <circle cx={chart.lastActualX} cy={chart.y(actuals[actuals.length - 1].v)} r="3" fill="var(--signal-green)" />
+                  <>
+                    <circle
+                      cx={chart.lastActualX}
+                      cy={chart.y(actuals[actuals.length - 1].v)}
+                      r="3"
+                      fill="var(--signal-green)"
+                      stroke="var(--ink-900)"
+                      strokeWidth="1.5"
+                    />
+                    <text
+                      x={Math.min(chart.lastActualX + 8, WIDTH - PAD.right - 44)}
+                      y={chart.y(actuals[actuals.length - 1].v) - 7}
+                      className="chart-tick chart-tick--live"
+                    >
+                      now {formatTick(actuals[actuals.length - 1].v, metric.unit)}
+                    </text>
+                  </>
                 )}
               </>
             )}

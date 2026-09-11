@@ -429,30 +429,173 @@ def build_ask_context():
     incidents = cur.fetchall()
     cur.close()
     conn.close()
-    return {"incidents": incidents, "breach_risks": load_breach_risks()}
+    return {
+        "services": load_service_states(),
+        "incidents": incidents,
+        "anomalies": load_recent_anomalies(),
+        "breach_risks": load_breach_risks(),
+    }
 
 
-def answer_question(question: str):
-    ctx = build_ask_context()
-    incidents_json = json.dumps(ctx["incidents"], default=str)
-    risks_json = json.dumps(ctx["breach_risks"], default=str)
-    if ANTHROPIC_API_KEY:
-        prompt = (
-            "You are the AI reliability engineer for CloudGuardian. Answer the operator's "
-            "question using ONLY the live system state below. Be concise and specific.\n\n"
-            "LIVE INCIDENTS (last 2h):\n" + incidents_json + "\n\n"
-            "FORECASTED BREACH RISKS:\n" + risks_json + "\n\n"
-            "QUESTION: " + question
+def load_service_states():
+    """Latest reading per service plus the 5-minute delta, so the agent can
+    describe what changed (not just a static snapshot)."""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute(
+        """
+        SELECT DISTINCT ON (service_name)
+               service_name, cpu_percent, memory_mb, latency_ms, error_rate, recorded_at
+        FROM metric_readings
+        WHERE recorded_at > now() - interval '15 minutes'
+        ORDER BY service_name, recorded_at DESC
+        """
+    )
+    latest = cur.fetchall()
+    cur.execute(
+        """
+        SELECT DISTINCT ON (service_name)
+               service_name, cpu_percent, memory_mb, latency_ms, error_rate, recorded_at
+        FROM metric_readings
+        WHERE recorded_at > now() - interval '5 minutes'
+        ORDER BY service_name, recorded_at ASC
+        """
+    )
+    earliest = {r["service_name"]: r for r in cur.fetchall()}
+    cur.close()
+    conn.close()
+
+    states = []
+    for row in latest:
+        base = earliest.get(row["service_name"], {})
+        values = {
+            k: row[k] for k in ("cpu_percent", "memory_mb", "latency_ms", "error_rate")
+        }
+        deltas = {}
+        for k in ("cpu_percent", "memory_mb", "latency_ms", "error_rate"):
+            if row[k] is not None and base.get(k) is not None:
+                deltas[k] = round(float(row[k]) - float(base[k]), 2)
+        states.append(
+            {
+                "service": row["service_name"],
+                "latest": values,
+                "delta_5m": deltas,
+                "recorded_at": row["recorded_at"],
+            }
         )
-        answer = call_llm(prompt, max_tokens=600)
+    return states
+
+
+def load_recent_anomalies(minutes: int = 60, limit: int = 20):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute(
+        """
+        SELECT service_name, method, metric_name, score, confidence, detected_at
+        FROM anomalies
+        WHERE detected_at > now() - (%s || ' minutes')::interval
+        ORDER BY detected_at DESC LIMIT %s
+        """,
+        (minutes, limit),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+ASK_SYSTEM_PROMPT = (
+    "You are the AI reliability engineer (site reliability co-pilot) for the "
+    "CloudGuardian autonomous platform. Answer the operator directly, in plain "
+    "technical English, and always ground every claim in the SYSTEM STATE and "
+    "conversation history provided. Never invent metrics, thresholds, or incidents.\n\n"
+    "Adapt your answer to what the operator is actually asking:\n"
+    "- Status / health checks ('is X up?', 'any issues?'): lead with a direct verdict per "
+    "service, then the key numbers that justify it.\n"
+    "- Diagnosis / root cause ('why did X happen?'): explain the chain (metric moved from A to B "
+    "over the window, detector flagged it, action taken, outcome), citing the actual deltas.\n"
+    "- Recommendations ('what should we do?', 'biggest risk?'): prioritize by the forecast "
+    "breach risk and current proximity to threshold; give concrete next actions.\n"
+    "- Trends / comparisons ('compare', 'worse?', 'trend'): compare services or metrics with the "
+    "supplied numbers.\n\n"
+    "Formatting: use short markdown - bullet lists, bold the important numbers. Be specific "
+    "('payment-service latency is 612 ms, up 488 ms in 5 min'), not generic. If the data cannot "
+    "answer the question, say exactly what is missing rather than guessing. Keep it under ~220 words."
+)
+
+
+def call_llm_chat(system: str, messages, max_tokens: int = 800):
+    if not ANTHROPIC_API_KEY:
+        return None
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=0.3,
+            messages=messages,
+        )
+        return "".join(
+            block.text for block in resp.content if getattr(block, "type", "") == "text"
+        )
+    except Exception as e:
+        agent_llm_failures.labels(endpoint="agent-ask").inc()
+        log_warning(logger, "llm_chat_failed", error=str(e))
+        return None
+
+
+def answer_question(question: str, history: list = None):
+    ctx = build_ask_context()
+    state = {
+        "services": ctx["services"],
+        "incidents": ctx["incidents"],
+        "recent_anomalies": ctx["anomalies"],
+        "breach_risks": ctx["breach_risks"],
+    }
+    state_json = json.dumps(state, default=str)
+
+    if ANTHROPIC_API_KEY:
+        history = history or []
+        messages = []
+        for h in history[-8:]:
+            messages.append({"role": h.get("role"), "content": h.get("content")})
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "SYSTEM STATE (fresh, use this as the source of truth):\n"
+                    + state_json
+                    + "\n\n"
+                    + "QUESTION: "
+                    + question
+                ),
+            }
+        )
+        answer = call_llm_chat(ASK_SYSTEM_PROMPT, messages)
         if answer:
             agent_ask_total.labels(mode="llm").inc()
             return {"answer": answer.strip(), "mode": "llm", "model": ANTHROPIC_MODEL}
 
     agent_ask_total.labels(mode="offline").inc()
+    lines = ["(Offline explainability mode - set ANTHROPIC_API_KEY for richer natural-language answers.)"]
+
+    svc_lines = []
+    for s in ctx["services"]:
+        lt = s["latest"]
+        svc_lines.append(
+            f"- {s['service']}: cpu {lt.get('cpu_percent')}, mem {lt.get('memory_mb')} MB, "
+            f"latency {lt.get('latency_ms')} ms, errors {lt.get('error_rate')}"
+        )
+    if svc_lines:
+        lines.append("Latest readings per service:")
+        lines.extend(svc_lines)
+    else:
+        lines.append("No recent metric readings available.")
+
     count = len(ctx["incidents"])
-    risks = ctx["breach_risks"]
-    lines = []
     if count:
         lines.append(f"{count} incident(s) in the last 2 hours.")
         for inc in ctx["incidents"][:3]:
@@ -462,6 +605,19 @@ def answer_question(question: str):
             )
     else:
         lines.append("No incidents in the last 2 hours.")
+
+    anomalies = ctx["anomalies"]
+    if anomalies:
+        lines.append(
+            f"Anomaly detector flags ({len(anomalies)} in the last hour): "
+            + "; ".join(
+                f"{a['service_name']} {a['method']} on {a['metric_name'] or 'multivariate'} "
+                f"(score {a['score']:.2f})"
+                for a in anomalies[:4]
+            )
+        )
+
+    risks = ctx["breach_risks"]
     if risks:
         lines.append("Forecast breach risks:")
         for r in risks[:3]:
@@ -471,7 +627,6 @@ def answer_question(question: str):
             )
     else:
         lines.append("No forecasted breaches right now.")
-    lines.append("(Offline explainability mode - set ANTHROPIC_API_KEY for natural-language answers.)")
     return {"answer": "\n".join(lines), "mode": "offline", "model": "statistical-fallback"}
 
 
@@ -518,7 +673,13 @@ def ask(payload: dict):
     question = (payload.get("question") or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="question is required")
-    return answer_question(question)
+    history = []
+    for h in (payload.get("history") or [])[-10:]:
+        role = h.get("role")
+        text = str(h.get("content") or h.get("text") or "").strip()
+        if role in ("user", "assistant") and text:
+            history.append({"role": role, "content": text[:2000]})
+    return answer_question(question, history)
 
 
 @app.get("/agent/incidents/{incident_id}/report")

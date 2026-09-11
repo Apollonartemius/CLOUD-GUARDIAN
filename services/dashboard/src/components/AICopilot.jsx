@@ -31,7 +31,9 @@ export default function AICopilot() {
     setMessages((m) => [...m, { role: "user", text: q }]);
     setInput("");
     setBusy(true);
-    const result = await askAgent(q);
+
+    const history = messages.map((m) => ({ role: m.role, text: m.text }));
+    const result = await askAgent(q, history);
     setBusy(false);
     setMessages((m) => [
       ...m,
@@ -41,6 +43,7 @@ export default function AICopilot() {
           result?.answer ||
           "AI agent unreachable — is the ai-reasoning-agent service running?",
         mode: result?.mode,
+        model: result?.model,
       },
     ]);
   }
@@ -49,7 +52,7 @@ export default function AICopilot() {
     <div className="panel ai-copilot">
       <div className="panel__header">
         <h2 className="panel__title">AI Copilot</h2>
-        <span className="panel__subtitle">grounded in live incidents + forecasts</span>
+        <span className="panel__subtitle">Claude · grounded in live incidents + forecasts</span>
       </div>
 
       <div className="copilot-messages" ref={scrollRef}>
@@ -60,8 +63,15 @@ export default function AICopilot() {
             </div>
             <div className="copilot-msg__bubble">
               <pre className="copilot-msg__text">{m.text}</pre>
+              {m.mode === "llm" && (
+                <div className="copilot-msg__meta">
+                  via {m.model}
+                </div>
+              )}
               {m.mode === "offline" && (
-                <div className="copilot-msg__mode">offline explainability mode</div>
+                <div className="copilot-msg__mode">
+                  offline statistical mode
+                </div>
               )}
             </div>
           </div>
