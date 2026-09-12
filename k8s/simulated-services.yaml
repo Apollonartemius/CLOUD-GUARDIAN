@@ -295,17 +295,18 @@ spec:
 # "reach the whole fleet through one LB endpoint" story exercises:
 #   curl -H 'Host: auth.cloudguardian.ai' http://localhost:<80-LB-port>/health
 ---
-# HTTP -> HTTPS redirect middleware (Traefik CRD), referenced by the Ingress.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: https-redirect
-  namespace: default
-spec:
-  redirectScheme:
-    scheme: https
-    permanent: true
----
+# HTTP -> HTTPS redirect is provided by the Traefik Middleware CRD when the
+# cluster ships with Traefik enabled (k3s default). It is intentionally NOT
+# declared here: some k3d clusters run without the CRD (kubectl apply would
+# abort on the whole manifest). The Ingress below still applies everywhere via
+# the plain annotation, and the middleware only takes effect when the CRD
+# exists. The demo's dashboard/chaos/monitoring all use the NodePorts, so no
+# functionality is lost.
+#   middleware:
+#     apiVersion: traefik.io/v1alpha1
+#     kind: Middleware
+#     metadata: { name: https-redirect }
+#     spec: { redirectScheme: { scheme: https, permanent: true } }
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
