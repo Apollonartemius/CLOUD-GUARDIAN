@@ -55,29 +55,44 @@ say "7/8" "refresh alertmanager token + decision-engine kubeconfig mount"
 docker compose up -d --force-recreate alertmanager decision-engine
 
 say "8/8" "self-check: decision-engine -> fleet API reachability"
+# Reads the k3d API port from the mounted kubeconfig (differs per machine) and
+# verifies the container can reach the cluster and list the fleet pods. Exits
+# non-zero unless the full API round-trip succeeds, so a red line is a red flag.
 cat > /tmp/cg-concheck.py <<'PY'
-import socket, urllib3
+import sys, socket, yaml, urllib3
 urllib3.disable_warnings()
+port = 0
 try:
-    s = socket.create_connection(("host.docker.internal", 39831), timeout=5)
-    s.close()
-    tcp = "OPEN"
+    k = yaml.safe_load(open("/etc/cloudguardian/kubeconfig"))
+    server = k["clusters"][0]["cluster"]["server"]
+    port = int(server.rsplit(":", 1)[1])
+    print("kubeconfig server:", server, flush=True)
 except Exception as e:
-    tcp = "FAIL: %s" % (e,)
-print("TCP  host.docker.internal:39831 =", tcp, flush=True)
-if tcp == "OPEN":
-    import k8s_remediator as k
-    from kubernetes import client
-    from kubernetes.client import Configuration
-    Configuration.set_default(k.load_api_config())
-    pods = [p.metadata.name for p in client.CoreV1Api().list_namespaced_pod("default").items]
-    print("PODS =", pods, flush=True)
+    print("could not read kubeconfig:", repr(e)[:120], flush=True)
+ok = False
+for h in ("host.docker.internal",):
+    try:
+        socket.create_connection((h, port), timeout=5).close()
+        print("TCP", h, port, "OPEN", flush=True)
+        import k8s_remediator as kr
+        from kubernetes import client
+        from kubernetes.client import Configuration
+        cfg = kr.load_api_config()
+        cfg.host = "https://%s:%d" % (h, port)
+        Configuration.set_default(cfg)
+        pods = [p.metadata.name for p in client.CoreV1Api().list_namespaced_pod("default").items]
+        print("PODS =", pods, flush=True)
+        ok = True
+        break
+    except Exception as e:
+        print("  ", h, "->", repr(e)[:120], flush=True)
+sys.exit(0 if ok else 1)
 PY
 
 OK=0
 for _ in 1 2 3 4 5 6 7 8; do
   if docker cp /tmp/cg-concheck.py decision-engine:/tmp/cg-concheck.py 2>/dev/null \
-     && docker exec decision-engine python3 -u /tmp/cg-concheck.py 2>/dev/null; then
+     && docker exec -e PYTHONPATH=/app decision-engine python3 -u /tmp/cg-concheck.py 2>/dev/null; then
     OK=1
     break
   fi
@@ -95,7 +110,8 @@ DEMO_PASSWORD="$(grep -E '^ADMIN_PASSWORD=' monitoring/vault/vault-secrets.env 2
 echo ""
 echo "=============================================="
 echo "  ALL GREEN. Demo is live."
-echo "  Dashboard:  https://shiny-engine-q7965x9j9wv9c466p-3001.app.github.dev"
+echo "  Dashboard (this machine):  http://localhost:3001"
+echo "  Shareable URL (Codespace): https://shiny-engine-q7965x9j9wv9c466p-3001.app.github.dev"
 echo "  Email:      ${DEMO_EMAIL:-admin@cloudguardian.ai}"
 echo "  Password:   ${DEMO_PASSWORD:-see monitoring/vault/vault-secrets.env}"
 echo "  Login via the top-right Authenticate button."
