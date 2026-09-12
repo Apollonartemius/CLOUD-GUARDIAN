@@ -90,11 +90,13 @@ if [ "$OK" != "1" ]; then
   exit 1
 fi
 
+DEMO_EMAIL="$(grep -E '^ADMIN_EMAIL=' monitoring/vault/vault-secrets.env 2>/dev/null | cut -d= -f2)"
+DEMO_PASSWORD="$(grep -E '^ADMIN_PASSWORD=' monitoring/vault/vault-secrets.env 2>/dev/null | cut -d= -f2)"
 echo ""
 echo "=============================================="
 echo "  ALL GREEN. Demo is live."
 echo "  Dashboard:  https://shiny-engine-q7965x9j9wv9c466p-3001.app.github.dev"
-echo "  Email:      admin@cloudguardian.ai"
-echo "  Password:   Mhk8z1QVRrWK1NxtoSUYmAZe"
+echo "  Email:      ${DEMO_EMAIL:-admin@cloudguardian.ai}"
+echo "  Password:   ${DEMO_PASSWORD:-see monitoring/vault/vault-secrets.env}"
 echo "  Login via the top-right Authenticate button."
 echo "=============================================="

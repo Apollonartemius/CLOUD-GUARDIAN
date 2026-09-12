@@ -1,0 +1,10 @@
+title = "CloudGuardian AI gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Project's published demo credential (admin@cloudguardian.ai / admin password) shown to reviewers - intentionally public demo data, not a real secret"
+regexes = [
+  "Mhk8z1QVRrWK1NxtoSUYmAZe",
+]
