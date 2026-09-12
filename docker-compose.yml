@@ -87,9 +87,9 @@ services:
       - "sh"
       - "-c"
     command:
-      - "sed -e 's/__ALERT_HOOK_SECRET__/'\"$ALERT_HOOK_SECRET\"'/g' /etc/alertmanager/alertmanager.yml > /tmp/am.yml && cat /tmp/am.yml > /etc/alertmanager/alertmanager.yml && exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager --web.external-url=http://localhost:9093"
+      - "sed -e 's/__ALERT_HOOK_SECRET__/'\"$ALERT_HOOK_SECRET\"'/g' /etc/alertmanager/alertmanager.yml > /tmp/am.yml && exec /bin/alertmanager --config.file=/tmp/am.yml --storage.path=/alertmanager --web.external-url=http://localhost:9093"
     volumes:
-      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
       - "9093:9093"
     networks:
