@@ -334,6 +334,8 @@ services:
     container_name: dashboard
     ports:
       - "3001:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - cloudguardian
     depends_on:
