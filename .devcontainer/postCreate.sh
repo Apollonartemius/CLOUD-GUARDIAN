@@ -52,7 +52,7 @@ chmod 600 .kube/config
 kubectl apply -f k8s/ --kubeconfig .kube/config
 
 echo "[5/6] Waiting for the fleet pods to become ready..."
-kubectl --kubeconfig .kube/config rollout status deployment --all --timeout=120s -n default || true
+kubectl --kubeconfig .kube/config rollout status deployment/auth-service deployment/payment-service deployment/inventory-service --timeout=120s || true
 
 echo "[6/6] Bringing up the monitoring platform..."
 ./start.sh
