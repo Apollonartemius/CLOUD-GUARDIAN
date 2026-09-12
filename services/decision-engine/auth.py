@@ -66,6 +66,27 @@ def create_token(subject: str, role: str = "operator", ttl: int = TOKEN_TTL_SECO
     return _token("access", subject, role, ttl)
 
 
+# Module-global service-token cache: {subject: (token, minted_at)}. A token
+# expires after TOKEN_TTL_SECONDS, so a long-running service minting once at
+# import (the old pattern) silently begins failing every inter-service call
+# with 401 once the TTL passes. service_token() re-mints a few minutes before
+# expiry, so service-to-service auth keeps working on indefinite uptimes.
+_service_tokens: dict[str, tuple[str, float]] = {}
+
+
+def service_token(
+    subject: str, role: str = "service", ttl: int = TOKEN_TTL_SECONDS
+) -> str:
+    cached = _service_tokens.get(subject)
+    if cached is not None:
+        token, minted_at = cached
+        if time.time() - minted_at < ttl - 300:
+            return token
+    token = create_token(subject, role=role, ttl=ttl)
+    _service_tokens[subject] = (token, time.time())
+    return token
+
+
 def create_refresh_token(subject: str, role: str = "operator") -> str:
     """Long-lived refresh token (typ=refresh). Only valid for /auth/refresh."""
     return _token("refresh", subject, role, REFRESH_TOKEN_TTL_SECONDS)

@@ -88,7 +88,10 @@ if not ADMIN_EMAIL or not ADMIN_PASSWORD:
     from vault_client import get_admin_credentials
 
     ADMIN_EMAIL, ADMIN_PASSWORD = get_admin_credentials()
-SERVICE_TOKEN = auth.create_token(subject="decision-engine", role="service")
+def _service_token():
+    # Lazy + self-refreshing: a token minted once at import dies after the
+    # 6h TTL and silently 401s every inter-service call on long uptimes.
+    return auth.service_token("decision-engine")
 
 # Alerting (Phase 7): generic Slack-compatible webhook. AWS SNS can be
 # swapped in behind the same function - it just needs a signed publish.
@@ -286,7 +289,7 @@ def notify_ai_agent(incident_id: int, service: str, incident_type: str, correlat
                     "correlation_id": correlation_id,
                 },
                 headers={
-                    "Authorization": f"Bearer {SERVICE_TOKEN}",
+                    "Authorization": f"Bearer {_service_token()}",
                     "X-Correlation-ID": correlation_id,
                 },
                 timeout=5,
@@ -399,7 +402,7 @@ def check_forecast_breaches() -> list:
         resp = requests.get(
             f"{FORECAST_ENGINE_URL}/forecast/breach-risk",
             headers={
-                "Authorization": f"Bearer {SERVICE_TOKEN}",
+                "Authorization": f"Bearer {_service_token()}",
                 "X-Correlation-ID": "forecast-check",
             },
             timeout=5,

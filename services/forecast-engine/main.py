@@ -390,14 +390,19 @@ def get_forecast(
         raise HTTPException(status_code=404, detail=f"no forecast yet for {service}.{metric}")
     step = entry["step_seconds"]
     horizon = max(1, int(round(minutes * 60 / step)))
+    points = entry["points"][:horizon]
+    # Points only span PREDICTION_WINDOW_MINUTES (the trained horizon). If the
+    # caller asked for more, don't report their window and silently return less
+    # - report the window the points actually cover.
+    effective_minutes = round(len(points) * step / 60)
     return {
         "service": service,
         "metric": metric,
         "model": entry["model"],
-        "minutes": minutes,
+        "minutes": effective_minutes,
         "step_seconds": step,
         "generated_at": entry["generated_at"],
-        "points": entry["points"][:horizon],
+        "points": points,
     }
 
 
@@ -405,9 +410,11 @@ def get_forecast(
 def breach_risk(minutes: int = Query(PREDICTION_WINDOW_MINUTES, ge=1, le=1440)):
     with _lock:
         snapshot = dict(_last_breach_risk)
+    # Breach risk is computed against the trained forecast window; report the
+    # window the risks actually cover rather than echoing the request param.
     return {
         "generated_at": snapshot["generated_at"],
-        "window_minutes": minutes,
+        "window_minutes": PREDICTION_WINDOW_MINUTES,
         "count": len(snapshot["risks"]),
         "risks": snapshot["risks"],
     }

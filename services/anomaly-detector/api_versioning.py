@@ -26,7 +26,7 @@ class VersionPrefix:
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
             path = scope.get("path", "")
-            if path.startswith(self._PREFIX + "/"):
+            if path == self._PREFIX or path.startswith(self._PREFIX + "/"):
                 scope["path"] = path[len(self._PREFIX):] or "/"
                 raw = scope.get("raw_path")
                 if raw is not None:

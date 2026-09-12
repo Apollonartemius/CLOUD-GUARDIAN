@@ -126,18 +126,20 @@ def init_db():
 
 def fetch_recent(service: str, limit: int = ROLLING_WINDOW + 1) -> pd.DataFrame:
     conn = get_connection()
-    df = pd.read_sql(
-        """
-        SELECT cpu_percent, memory_mb, latency_ms, error_rate, recorded_at
-        FROM metric_readings
-        WHERE service_name = %(service)s
-        ORDER BY recorded_at DESC
-        LIMIT %(limit)s
-        """,
-        conn,
-        params={"service": service, "limit": limit},
-    )
-    conn.close()
+    try:
+        df = pd.read_sql(
+            """
+            SELECT cpu_percent, memory_mb, latency_ms, error_rate, recorded_at
+            FROM metric_readings
+            WHERE service_name = %(service)s
+            ORDER BY recorded_at DESC
+            LIMIT %(limit)s
+            """,
+            conn,
+            params={"service": service, "limit": limit},
+        )
+    finally:
+        conn.close()
     return df.iloc[::-1].reset_index(drop=True)  # chronological order
 
 
@@ -237,46 +239,57 @@ def _detection_loop():
                 if_hit = isolation_forest_check(service, df)
 
                 if zscore_hits or if_hit:
-                    conn = get_connection()
-                    cur = conn.cursor()
-                    now = datetime.now(timezone.utc)
-                    for metric, score, confidence in zscore_hits:
-                        _record_anomaly(cur, service, "zscore", metric, score, confidence, now)
-                        log_info(
-                            logger,
-                            "zscore_anomaly_detected",
-                            service=service,
-                            metric=metric,
-                            zscore=round(score, 2),
-                            confidence=round(confidence, 2),
-                        )
-                    if if_hit:
-                        score, confidence = if_hit
-                        # IsolationForest emits borderline points as anomalies
-                        # (contamination=0.05) with very low confidence. Store
-                        # only genuine detections so weak noise does not drag
-                        # the decision-engine's average confidence below its
-                        # trigger threshold.
-                        if confidence < ISOLATION_FOREST_MIN_CONFIDENCE:
+                    conn = None
+                    cur = None
+                    try:
+                        conn = get_connection()
+                        cur = conn.cursor()
+                        now = datetime.now(timezone.utc)
+                        for metric, score, confidence in zscore_hits:
+                            _record_anomaly(cur, service, "zscore", metric, score, confidence, now)
                             log_info(
                                 logger,
-                                "isolation_forest_anomaly_ignored_low_confidence",
+                                "zscore_anomaly_detected",
                                 service=service,
-                                score=round(score, 2),
+                                metric=metric,
+                                zscore=round(score, 2),
                                 confidence=round(confidence, 2),
                             )
-                        else:
-                            _record_anomaly(cur, service, "isolation_forest", None, score, confidence, now)
-                            log_info(
-                                logger,
-                                "isolation_forest_anomaly_detected",
-                                service=service,
-                                score=round(score, 2),
-                                confidence=round(confidence, 2),
-                            )
-                    conn.commit()
-                    cur.close()
-                    conn.close()
+                        if if_hit:
+                            score, confidence = if_hit
+                            # IsolationForest emits borderline points as anomalies
+                            # (contamination=0.05) with very low confidence. Store
+                            # only genuine detections so weak noise does not drag
+                            # the decision-engine's average confidence below its
+                            # trigger threshold.
+                            if confidence < ISOLATION_FOREST_MIN_CONFIDENCE:
+                                log_info(
+                                    logger,
+                                    "isolation_forest_anomaly_ignored_low_confidence",
+                                    service=service,
+                                    score=round(score, 2),
+                                    confidence=round(confidence, 2),
+                                )
+                            else:
+                                _record_anomaly(cur, service, "isolation_forest", None, score, confidence, now)
+                                log_info(
+                                    logger,
+                                    "isolation_forest_anomaly_detected",
+                                    service=service,
+                                    score=round(score, 2),
+                                    confidence=round(confidence, 2),
+                                )
+                        conn.commit()
+                    finally:
+                        # An exception mid-insert must still release the pooled
+                        # connection or the pool (max 5) exhausts and the
+                        # detection loop hangs on every future get_connection().
+                        if conn is not None:
+                            try:
+                                cur.close()
+                            except Exception:
+                                pass
+                            conn.close()
             except Exception as e:
                 log_warning(logger, "anomaly_check_error", service=service, error=str(e))
         time.sleep(CHECK_INTERVAL_SECONDS)

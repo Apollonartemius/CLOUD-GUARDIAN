@@ -30,6 +30,12 @@ RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", 300))
 RATE_LIMIT_BURST = int(os.getenv("RATE_LIMIT_BURST", 60))
 DEFAULT_TENANT = os.getenv("DEFAULT_TENANT", "default").strip() or "default"
 
+# A zero/negative RPM is a degenerate config: the token bucket would never
+# refill and retry_after computes int((..)/0.0) -> ZeroDivisionError on every
+# request. Treat it as "limiter disabled" instead of crashing the API.
+if RATE_LIMIT_RPM <= 0:
+    RATE_LIMIT_ENABLED = False
+
 # Health/metadata and the OIDC handshake stay unthrottled so probing and the
 # IdP redirect are never blocked.
 EXEMPT_PATHS = {"/health", "/metrics", "/auth/oidc/login", "/auth/oidc/callback"}

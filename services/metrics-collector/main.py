@@ -16,6 +16,7 @@ Exposes:
   GET /metrics/gaps?minutes=60         -> detected ingestion gaps
 """
 
+import math
 import os
 import threading
 import time
@@ -179,43 +180,68 @@ def _poll_once():
     )
 
     now = datetime.now(timezone.utc)
-    conn = get_connection()
-    cur = conn.cursor()
+    conn = None
+    cur = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        for service in SERVICES:
+            cpu_v = cpu.get(service)
+            mem_v = mem.get(service)
+            lat_v = latency.get(service)
+            err_v = errors.get(service)
+            # A service that vanished from the Prometheus response must NOT be
+            # written as an all-NULL row: that would blind the anomaly detector
+            # to the newest tick (NaN replaces the last good reading) and defeat
+            # ingestion_gaps. Skip it entirely so history stays intact.
+            if cpu_v is None and mem_v is None and lat_v is None and err_v is None:
+                continue
 
-    for service in SERVICES:
-        cur.execute(
-            """
-            INSERT INTO metric_readings
-                (service_name, cpu_percent, memory_mb, latency_ms, error_rate, recorded_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                service,
-                cpu.get(service),
-                mem.get(service),
-                latency.get(service),
-                errors.get(service),
-                now,
-            ),
-        )
+            # Prometheus can emit NaN when the latency histogram had no samples
+            # in the window (rate(_sum)/rate(_count) is a division-by-zero
+            # sample). Storing NaN poisons forecast training (NaN is NOT NULL
+            # in SQL), so coerce non-finite values to NULL.
+            values = []
+            for v in (cpu_v, mem_v, lat_v, err_v):
+                if v is None or not math.isfinite(v):
+                    values.append(None)
+                else:
+                    values.append(v)
 
-        with _state_lock:
-            last = _last_poll_time.get(service)
-            if last is not None:
-                gap = (now - last).total_seconds()
-                if gap > POLL_INTERVAL_SECONDS * 2:
-                    cur.execute(
-                        """
-                        INSERT INTO ingestion_gaps (service_name, gap_seconds, detected_at)
-                        VALUES (%s, %s, %s)
-                        """,
-                        (service, gap, now),
-                    )
-            _last_poll_time[service] = now
+            cur.execute(
+                """
+                INSERT INTO metric_readings
+                    (service_name, cpu_percent, memory_mb, latency_ms, error_rate, recorded_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (service, *values, now),
+            )
 
-    conn.commit()
-    cur.close()
-    conn.close()
+            with _state_lock:
+                last = _last_poll_time.get(service)
+                if last is not None:
+                    gap = (now - last).total_seconds()
+                    if gap > POLL_INTERVAL_SECONDS * 2:
+                        cur.execute(
+                            """
+                            INSERT INTO ingestion_gaps (service_name, gap_seconds, detected_at)
+                            VALUES (%s, %s, %s)
+                            """,
+                            (service, gap, now),
+                        )
+                _last_poll_time[service] = now
+
+        conn.commit()
+    finally:
+        # Never leak a pooled connection: an exception must still close it or
+        # the ThreadedConnectionPool (max 5) eventually exhausts and the whole
+        # poll loop hangs forever on get_connection().
+        if conn is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+            conn.close()
     return now
 
 

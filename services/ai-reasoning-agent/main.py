@@ -47,7 +47,10 @@ FORECAST_ENGINE_URL = os.getenv("FORECAST_ENGINE_URL", "http://forecast-engine:8
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 METRICS_WINDOW = int(os.getenv("AGENT_METRICS_WINDOW_MINUTES", 30))
-SERVICE_TOKEN = auth.create_token(subject="ai-reasoning-agent", role="service")
+def _service_token():
+    # Lazy + self-refreshing: a token minted once at import dies after the
+    # 6h TTL and silently 401s every inter-service call on long uptimes.
+    return auth.service_token("ai-reasoning-agent")
 
 app = FastAPI(title="ai-reasoning-agent")
 # Only the dashboard (and a handful of dev origins) may call these APIs from
@@ -188,7 +191,7 @@ def load_breach_risks():
     try:
         resp = requests.get(
             f"{FORECAST_ENGINE_URL}/forecast/breach-risk",
-            headers={"Authorization": f"Bearer {SERVICE_TOKEN}"},
+            headers={"Authorization": f"Bearer {_service_token()}"},
             timeout=5,
         )
         resp.raise_for_status()
