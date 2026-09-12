@@ -164,12 +164,12 @@ def _simulate_loop():
                         for _ in range(2):
                             threading.Thread(target=_burn_cpu, daemon=True).start()
                 elif ctype == "memory_leak":
-                    rate = _state.get("leak_mb_per_tick", 0) or random.uniform(5, 15)
+                    rate = _state.get("leak_mb_per_tick", 0) or random.uniform(25, 60)
                     _leak_buf.extend(bytes(int(rate * 1024 * 1024)))
                 elif ctype == "latency_spike":
-                    target_latency = BASE_LATENCY_MS * 8
+                    target_latency = max(400, BASE_LATENCY_MS * 16)
                 elif ctype == "error_storm":
-                    error_rate = 0.35
+                    error_rate = 0.45
                 else:
                     _burn_stop.set()
             else:
