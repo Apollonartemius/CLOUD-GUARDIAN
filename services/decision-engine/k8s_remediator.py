@@ -14,18 +14,49 @@ Loaded from a mounted kubeconfig (see docker-compose volume mounts).
 """
 
 import os
+import re
 
 from kubernetes import client, config
+from kubernetes.client import Configuration
 from logutil import get_logger
 
 logger = get_logger("k8s-adapter")
 
 KUBECONFIG_PATH = os.getenv("KUBECONFIG_PATH", "/etc/cloudguardian/kubeconfig")
 K8S_NAMESPACE = os.getenv("K8S_NAMESPACE", "default")
+# The mounted kubeconfig (from `k3d kubeconfig get`) points at the host-side
+# bind address `https://0.0.0.0:<port>` (or 127.0.0.1). Inside a Docker
+# container that resolves to the container itself, not the Docker host, so the
+# cluster API is unreachable. Rewrite it to the host gateway so fleet
+# remediation/chaos work from the container. In-cluster/bare-metal setups can
+# override with K8S_API_HOST.
+K8S_API_HOST = os.getenv("K8S_API_HOST", "host.docker.internal")
+
+
+def load_api_config() -> Configuration:
+    """Load the kubeconfig once and rewrite the API server to a reachable host."""
+    cfg = Configuration()
+    config.load_kube_config(config_file=KUBECONFIG_PATH, client_configuration=cfg)
+    host = cfg.host or ""
+    if re.match(r"^https://(0\.0\.0\.0|127\.0\.0\.1):", host):
+        new_host = re.sub(
+            r"^https://(0\.0\.0\.0|127\.0\.0\.1):", f"https://{K8S_API_HOST}:", host
+        )
+        logger.info("rewrote kubeconfig API server %s -> %s", host, new_host)
+        cfg.host = new_host
+        # k3d's self-signed CA has no SAN for the rewritten host, so skip cert
+        # verification for this dev-only host-gateway path (also relies on
+        # `extra_hosts: host.docker.internal:host-gateway` in docker-compose).
+        cfg.verify_ssl = False
+    return cfg
+
+
+def _set_default_config() -> None:
+    Configuration.set_default(load_api_config())
 
 
 def _load_client():
-    config.load_kube_config(config_file=KUBECONFIG_PATH)
+    _set_default_config()
     return client.AppsV1Api()
 
 
@@ -70,6 +101,7 @@ def rollout_restart_deployment(service_name: str) -> tuple[bool, str]:
 def get_pod_count(service_name: str) -> int:
     """Current number of running replicas for a deployment."""
     try:
+        _set_default_config()
         v1 = client.CoreV1Api()
         pods = v1.list_namespaced_pod(
             namespace=K8S_NAMESPACE, label_selector=f"app={service_name}"

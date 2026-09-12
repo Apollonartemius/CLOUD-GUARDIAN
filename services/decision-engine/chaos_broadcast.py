@@ -18,8 +18,10 @@ decision-engine ServiceAccount), which is granted `create pods/exec`.
 
 import os
 
-from kubernetes import client, config
+from kubernetes import client
+from kubernetes.client import Configuration
 from kubernetes.stream import stream
+from k8s_remediator import load_api_config
 from logutil import get_logger
 
 logger = get_logger("chaos-broadcast")
@@ -39,7 +41,7 @@ VALID_TYPES = {
 
 
 def _load_core():
-    config.load_kube_config(config_file=KUBECONFIG_PATH)
+    Configuration.set_default(load_api_config())
     return client.CoreV1Api()
 
 
